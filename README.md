@@ -1,7 +1,19 @@
 # xdl
 
-[![Go Version](https://img.shields.io/badge/go-1.21%2B-blue.svg)](https://go.dev/)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+<video src="https://github.com/ghostlawless/xdl/releases/download/v0.1.0/video.mp4" controls width="650"></video>
+
+---
+
+## Donate
+
+If xdl is useful to you and you want to support future development:
+
+**Bitcoin (BTC):** `bc1qj53yydtmklwvxk27ue24dd5jxnf5a54wvjav7q`
+
+---
+
+[![Go Version](https://img.shields.io/badge/go-1.21%2B-blue.svg)](https://go.dev/)  
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)  
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 A precision media-extraction tool for X (Twitter).  
@@ -32,11 +44,9 @@ No tracking, no telemetry, no external API — everything runs locally.
 
 ## Installation
 
-```bash
-git clone https://github.com/ghostlawless/xdl
-cd xdl
-go build -o xdl ./cmd/xdl
-```
+git clone https://github.com/ghostlawless/xdl  
+cd xdl  
+go build -o xdl ./cmd/xdl  
 
 This produces a self-contained binary named `xdl`.
 
@@ -46,32 +56,24 @@ This produces a self-contained binary named `xdl`.
 
 ### Basic usage
 
-```bash
-./xdl -c cookies.json <username>
-```
+./xdl -c cookies.json <username>  
 
 Example:
 
-```bash
 ./xdl -c cookies.json lawlessmedusax
-```
 
 ### Debug mode
 
-```bash
 ./xdl -d -c cookies.json lawlessmedusax
-```
 
 ### Quiet mode
 
-```bash
 ./xdl -q -c cookies.json lawlessmedusax
-```
 
 Flags:
 
-- `-c cookies.json` — cookie file exported from your browser (for example: Cookie-Editor 1.13.0 on Google Chrome)
-- `-d` — debug mode (logs to `logs/run_<id>/`)
+- `-c cookies.json` — cookie file exported from your browser (for example: Cookie-Editor 1.13.0 on Google Chrome)  
+- `-d` — debug mode (logs to `logs/run_<id>/`)  
 - `-q` — quiet mode (minimal console output)
 
 ---
@@ -81,7 +83,6 @@ Flags:
 xdl does **not** store or generate cookies.  
 The user provides them using a browser extension that exports cookies in the standard Chrome/Firefox JSON format, like:
 
-```json
 [
   {
     "domain": ".x.com",
@@ -99,10 +100,8 @@ The user provides them using a browser extension that exports cookies in the sta
     "value": "..."
   }
 ]
-```
 
-xdl automatically extracts the required values (`auth_token`, `ct0`, `guest_id`) and applies them **in memory only**.
-
+xdl automatically extracts the required values (`auth_token`, `ct0`, `guest_id`) and applies them **in memory only**.  
 The cookie file is never modified or saved back.
 
 ---
@@ -111,18 +110,15 @@ The cookie file is never modified or saved back.
 
 Downloaded media is stored under:
 
-```text
-xDownloads/
-  xDownload - <username>@<run_id>/
-    images/
-    videos/
-    gifs/
+xDownloads/  
+  xDownload - <username>@<run_id>/  
+    images/  
+    videos/  
+    gifs/  
     others/
-```
 
-Each run creates a new isolated folder.
-
-Filenames are sanitized to be filesystem-safe and are derived from the original media URL.
+Each run creates a new isolated folder.  
+Filenames are sanitized to be filesystem-safe and derived from the original media URL.
 
 ---
 
@@ -130,11 +126,11 @@ Filenames are sanitized to be filesystem-safe and are derived from the original 
 
 The file `essentials.json` contains the static wiring needed for xdl to talk to X’s internal GraphQL endpoints:
 
-- GraphQL operations used by xdl (`UserByScreenName`, `UserMedia`)
-- The public web bearer token used by the X web client
-- Default headers (auth type, active user, user-agent, language, etc.)
-- Feature flags required by the current X web client
-- Runtime parameters (timeouts, retries)
+- GraphQL operations used by xdl (`UserByScreenName`, `UserMedia`)  
+- The public web bearer token used by the X web client  
+- Default headers (auth type, active user, user-agent, language, etc.)  
+- Feature flags required by the current X web client  
+- Runtime parameters (timeouts, retries)  
 - Empty cookie slots (filled at runtime via `-c cookies.json`)
 
 This file MUST NOT contain personal cookies or private tokens.  
@@ -172,8 +168,8 @@ Pull requests are welcome.
 
 For non-trivial changes:
 
-1. Open an issue describing the motivation and approach.
-2. Keep the style minimal and focused on local, single-profile scraping.
+1. Open an issue describing the motivation and approach.  
+2. Keep the style minimal and focused on local, single-profile scraping.  
 3. Avoid adding third-party dependencies unless strictly necessary.
 
 ---
@@ -193,6 +189,5 @@ Planned / potential improvements:
 
 ## Project status
 
-Early but functional.
-
+Early but functional.  
 The core flow (lookup user → collect media → download assets) is stable enough for daily use, but internals may still change.
