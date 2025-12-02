@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,15 +24,16 @@ import (
 )
 
 type Options struct {
-	RunDir         string
-	User           string
-	PreflightWC    int
-	MediaMaxBytes  int64
-	DryRun         bool
-	SortBySizeDesc bool
-
+	RunDir            string
+	User              string
+	MediaMaxBytes     int64
+	DryRun            bool
 	Attempts          int
 	PerAttemptTimeout time.Duration
+	Progress          func(ProgressEvent)
+	ShouldPause       func() bool
+	ShouldQuit        func() bool
+	Checkpoint        *Checkpoint
 }
 
 type Summary struct {
@@ -43,6 +44,20 @@ type Summary struct {
 	Cycles     int
 }
 
+type ProgressKind int
+
+const (
+	ProgressKindDownloaded ProgressKind = iota
+	ProgressKindSkipped
+	ProgressKindFailed
+)
+
+type ProgressEvent struct {
+	User string
+	Kind ProgressKind
+	Size int64
+}
+
 type item struct {
 	Idx  int
 	URL  string
@@ -51,115 +66,132 @@ type item struct {
 	Ext  string
 }
 
-func DownloadAllCycles(client *http.Client, conf *config.EssentialsConfig, medias []scraper.Media, opt Options) (Summary, error) {
+func DownloadAllCycles(cl *http.Client, cf *config.EssentialsConfig, ms []scraper.Media, opt Options) (Summary, error) {
 	s := Summary{}
-	if len(medias) == 0 {
+	if len(ms) == 0 {
 		return s, nil
 	}
-
-	dirs := subdirs(opt.RunDir)
-	for _, d := range dirs.All() {
+	ds := binsOf(opt.RunDir)
+	for _, d := range ds.all() {
 		if err := utils.EnsureDir(d); err != nil {
 			return s, err
 		}
 	}
-
-	items := make([]item, 0, len(medias))
-	for i, m := range medias {
-		ext := httpx.InferExt("", m.URL, m.Type)
-		items = append(items, item{Idx: i + 1, URL: m.URL, Type: m.Type, Size: -1, Ext: ext})
+	cp := opt.Checkpoint
+	if cp == nil {
+		cp = NewCheckpoint(opt.User, "", ms)
 	}
-	preflightSizes(client, conf, items, max(4, opt.PreflightWC))
-
-	if opt.SortBySizeDesc {
-		sort.SliceStable(items, func(i, j int) bool { return items[i].Size > items[j].Size })
-	}
-
-	pending := make([]item, len(items))
-	copy(pending, items)
-
-	for len(pending) > 0 {
-		k := 3 + rand.Intn(13)
-		if k > len(pending) {
-			k = len(pending)
+	it := make([]item, 0, len(cp.Items))
+	for _, v := range cp.Items {
+		switch v.Status {
+		case CheckpointDone, CheckpointSkipped:
+			s.Skipped++
+			continue
+		default:
+			ext := httpx.InferExt("", v.URL, v.Type)
+			it = append(it, item{Idx: v.Index, URL: v.URL, Type: v.Type, Size: v.Size, Ext: ext})
 		}
-		batch := pending[:k]
-		pending = pending[k:]
-
-		ok, skip, fail, bytes := downloadBatch(client, conf, batch, dirs, opt)
+	}
+	if len(it) == 0 {
+		return s, nil
+	}
+	pd := make([]item, len(it))
+	copy(pd, it)
+	for len(pd) > 0 {
+		if opt.ShouldQuit != nil && opt.ShouldQuit() {
+			return s, errors.New("download aborted by user")
+		}
+		if opt.ShouldPause != nil && opt.ShouldPause() {
+			for opt.ShouldPause != nil && opt.ShouldPause() {
+				if opt.ShouldQuit != nil && opt.ShouldQuit() {
+					return s, errors.New("download aborted by user")
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			if opt.ShouldQuit != nil && opt.ShouldQuit() {
+				return s, errors.New("download aborted by user")
+			}
+		}
+		k := 3 + rand.Intn(13)
+		if k > len(pd) {
+			k = len(pd)
+		}
+		b := pd[:k]
+		pd = pd[k:]
+		ok, sk, fl, by := doBatch(cl, cf, b, ds, opt, cp)
 		s.Downloaded += ok
-		s.Skipped += skip
-		s.Failed += fail
-		s.TotalBytes += bytes
+		s.Skipped += sk
+		s.Failed += fl
+		s.TotalBytes += by
 		s.Cycles++
 	}
 	return s, nil
 }
 
-func preflightSizes(client *http.Client, conf *config.EssentialsConfig, items []item, wc int) {
-	if wc < 1 {
-		wc = 1
+type bins struct {
+	I string
+	V string
+}
+
+func binsOf(root string) bins {
+	return bins{
+		I: filepath.Join(root, "images"),
+		V: filepath.Join(root, "videos"),
 	}
-	type job struct{ idx int }
-	jobs := make(chan job, len(items))
+}
+
+func (sd bins) all() []string {
+	return []string{sd.I, sd.V}
+}
+
+func doBatch(cl *http.Client, cf *config.EssentialsConfig, b []item, ds bins, opt Options, cp *Checkpoint) (ok, sk, fl int, by int64) {
 	var wg sync.WaitGroup
-	for w := 0; w < wc; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				_, size, _, status, err := httpx.Head(client, items[j.idx].URL, conf.X.Network)
-				if err != nil || status < 200 || status >= 300 {
-					items[j.idx].Size = -1
-					continue
-				}
-				items[j.idx].Size = size
-			}
-		}()
-	}
-	for i := range items {
-		jobs <- job{idx: i}
-	}
-	close(jobs)
-	wg.Wait()
-}
-
-type subDirs struct{ Images, Videos, Gifs, Others string }
-
-func subdirs(runDir string) subDirs {
-	return subDirs{
-		Images: filepath.Join(runDir, "images"),
-		Videos: filepath.Join(runDir, "videos"),
-		Gifs:   filepath.Join(runDir, "gifs"),
-		Others: filepath.Join(runDir, "others"),
-	}
-}
-
-func (sd subDirs) All() []string {
-	return []string{sd.Images, sd.Videos, sd.Gifs, sd.Others}
-}
-
-func downloadBatch(client *http.Client, conf *config.EssentialsConfig, batch []item, dirs subDirs, opt Options) (ok, skipped, failed int, bytes int64) {
-	var wg sync.WaitGroup
-	wg.Add(len(batch))
+	wg.Add(len(b))
 	var mu sync.Mutex
-	for _, it := range batch {
+	for _, it := range b {
 		it := it
 		go func() {
 			defer wg.Done()
-			r := downloadOne(client, conf, it, dirs, opt)
+			if opt.ShouldQuit != nil && opt.ShouldQuit() {
+				mu.Lock()
+				fl++
+				if cp != nil {
+					cp.MarkByURL(it.URL, CheckpointFailed, 0)
+				}
+				mu.Unlock()
+				return
+			}
+			r := doOne(cl, cf, it, ds, opt)
 			mu.Lock()
 			defer mu.Unlock()
 			if r.err != nil {
-				failed++
+				fl++
+				if cp != nil {
+					cp.MarkByURL(it.URL, CheckpointFailed, 0)
+				}
+				if opt.Progress != nil {
+					opt.Progress(ProgressEvent{User: opt.User, Kind: ProgressKindFailed, Size: 0})
+				}
 				return
 			}
 			if r.skipped {
-				skipped++
+				sk++
+				if cp != nil {
+					cp.MarkByURL(it.URL, CheckpointSkipped, r.size)
+				}
+				if opt.Progress != nil {
+					opt.Progress(ProgressEvent{User: opt.User, Kind: ProgressKindSkipped, Size: 0})
+				}
 				return
 			}
 			ok++
-			bytes += r.size
+			by += r.size
+			if cp != nil {
+				cp.MarkByURL(it.URL, CheckpointDone, r.size)
+			}
+			if opt.Progress != nil {
+				opt.Progress(ProgressEvent{User: opt.User, Kind: ProgressKindDownloaded, Size: r.size})
+			}
 		}()
 	}
 	wg.Wait()
@@ -173,105 +205,99 @@ type result struct {
 	err     error
 }
 
-func downloadOne(client *http.Client, conf *config.EssentialsConfig, it item, dirs subDirs, opt Options) result {
-	destDir := classifyDir(it, dirs)
-	_ = utils.EnsureDir(destDir)
-
-	base := basenameFromURL(it.URL)
+func doOne(cl *http.Client, cf *config.EssentialsConfig, it item, ds bins, opt Options) result {
+	dst := pick(it, ds)
+	_ = utils.EnsureDir(dst)
+	base := baseFrom(it.URL)
 	if base == "" {
-		base = shortHash(it.URL)
+		base = sh(it.URL)
 	}
 	base = utils.SanitizeFilename(base)
-
 	if opt.DryRun || opt.MediaMaxBytes > 0 {
-		_, size, _, status, err := httpx.Head(client, it.URL, conf.X.Network)
+		_, sz, _, st, err := httpx.Head(cl, it.URL, cf.X.Network)
 		if err != nil {
-			if conf.Runtime.DebugEnabled {
-				meta := fmt.Sprintf("HEAD_ERROR\nSTATUS: %d\nURL: %s\n", status, it.URL)
-				_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_head_meta", "txt", []byte(meta))
+			if cf.Runtime.DebugEnabled {
+				meta := fmt.Sprintf("HEAD_ERROR\nSTATUS: %d\nURL: %s\n", st, it.URL)
+				_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_head_meta", "txt", []byte(meta))
 			}
 			return result{err: err}
 		}
-		if opt.MediaMaxBytes > 0 && size > 0 && size > opt.MediaMaxBytes {
+		if opt.MediaMaxBytes > 0 && sz > 0 && sz > opt.MediaMaxBytes {
 			return result{skipped: true}
 		}
 		if opt.DryRun {
-			return result{ok: true, size: size}
+			return result{ok: true, size: sz}
 		}
 	}
-
 	ext := it.Ext
 	if ext == "" {
 		ext = httpx.InferExt("", it.URL, it.Type)
 	}
-	filename := base
-	if ext != "" && !strings.HasSuffix(strings.ToLower(filename), "."+ext) {
-		filename += "." + ext
+	fn := base
+	if ext != "" && !strings.HasSuffix(strings.ToLower(fn), "."+ext) {
+		fn += "." + ext
 	}
-	dest := filepath.Join(destDir, filename)
-
-	if st, err := os.Stat(dest); err == nil && st.Size() > 0 {
-		_ = os.Remove(dest)
+	full := filepath.Join(dst, fn)
+	if st, err := os.Stat(full); err == nil && st.Size() > 0 {
+		return result{skipped: true, size: st.Size()}
 	}
-
 	req, err := http.NewRequest(http.MethodGet, it.URL, nil)
 	if err != nil {
 		return result{err: err}
 	}
-	conf.BuildRequestHeaders(req, conf.X.Network)
+	cf.BuildRequestHeaders(req, cf.X.Network)
 	req.Header.Set("Accept", "*/*")
-
-	attempts := opt.Attempts
-	if attempts <= 0 {
-		attempts = 3
+	at := opt.Attempts
+	if at <= 0 {
+		at = 3
 	}
-	perTry := opt.PerAttemptTimeout
-	if perTry <= 0 {
-		perTry = 2 * time.Minute
+	to := opt.PerAttemptTimeout
+	if to <= 0 {
+		to = 2 * time.Minute
 	}
-
 	var n int64
-	var status int
-	var lastErr error
-	for a := 0; a < attempts; a++ {
-		n, status, lastErr = httpx.DownloadToFileWithTimeout(client, req, dest, opt.MediaMaxBytes, perTry)
-		if lastErr == nil {
+	var st int
+	var last error
+	for i := 0; i < at; i++ {
+		n, st, last = httpx.DownloadToFileWithTimeout(cl, req, full, opt.MediaMaxBytes, to)
+		if last == nil {
 			return result{ok: true, size: n}
 		}
-		if isTimeoutOrTemp(lastErr) {
-			sleep := backoff(a)
-			if conf.Runtime.DebugEnabled {
-				meta := fmt.Sprintf("RETRY a=%d sleep=%s status=%d url=%s err=%v\n", a+1, sleep, status, it.URL, lastErr)
-				_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_download_meta", "txt", []byte(meta))
+		if isTemp(last) {
+			sl := backoff(i)
+			if cf.Runtime.DebugEnabled {
+				meta := fmt.Sprintf("RETRY a=%d sleep=%s status=%d url=%s err=%v\n", i+1, sl, st, it.URL, last)
+				_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_download_meta", "txt", []byte(meta))
 			}
-			time.Sleep(sleep)
+			time.Sleep(sl)
 			continue
 		}
 		break
 	}
-	if conf.Runtime.DebugEnabled {
-		meta := fmt.Sprintf("DOWNLOAD_ERROR\nSTATUS: %d\nURL: %s\nDEST: %s\nERR: %v\n", status, it.URL, dest, lastErr)
-		_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_download_meta", "txt", []byte(meta))
+	if cf.Runtime.DebugEnabled {
+		meta := fmt.Sprintf("DOWNLOAD_ERROR\nSTATUS: %d\nURL: %s\nDEST: %s\nERR: %v\n", st, it.URL, full, last)
+		_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_download_meta", "txt", []byte(meta))
 	}
-	return result{err: lastErr}
+	return result{err: last}
 }
 
-func classifyDir(it item, dirs subDirs) string {
-	lurl := strings.ToLower(strings.Split(it.URL, "?")[0])
+func pick(it item, ds bins) string {
+	u := it.URL
+	if i := strings.IndexByte(u, '?'); i >= 0 {
+		u = u[:i]
+	}
+	l := strings.ToLower(u)
 	switch {
-	case strings.HasSuffix(lurl, ".gif"):
-		return dirs.Gifs
-	case strings.HasSuffix(lurl, ".mp4"), strings.HasSuffix(lurl, ".m3u8"), it.Type == "video":
-		return dirs.Videos
-	case strings.HasSuffix(lurl, ".jpg"), strings.HasSuffix(lurl, ".jpeg"),
-		strings.HasSuffix(lurl, ".png"), strings.HasSuffix(lurl, ".webp"), it.Type == "image":
-		return dirs.Images
+	case strings.HasSuffix(l, ".mp4"), strings.HasSuffix(l, ".m3u8"), it.Type == "video":
+		return ds.V
+	case strings.HasSuffix(l, ".jpg"), strings.HasSuffix(l, ".jpeg"), strings.HasSuffix(l, ".png"), strings.HasSuffix(l, ".webp"), strings.HasSuffix(l, ".gif"), it.Type == "image":
+		return ds.I
 	default:
-		return dirs.Others
+		return ds.I
 	}
 }
 
-func basenameFromURL(raw string) string {
+func baseFrom(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u == nil {
 		return ""
@@ -280,49 +306,37 @@ func basenameFromURL(raw string) string {
 	if b == "." || b == "/" || b == "" {
 		return ""
 	}
-	b = strings.SplitN(b, "?", 2)[0]
-	return b
+	return strings.SplitN(b, "?", 2)[0]
 }
 
-func shortHash(s string) string {
+func sh(s string) string {
 	h := sha1.Sum([]byte(s))
 	return hex.EncodeToString(h[:8])
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func isTimeoutOrTemp(err error) bool {
+func isTemp(err error) bool {
 	if err == nil {
 		return false
 	}
-	var nerr net.Error
-	if errors.As(err, &nerr) {
-		if nerr.Timeout() || nerr.Temporary() {
+	var ne net.Error
+	if errors.As(err, &ne) {
+		if ne.Timeout() || ne.Temporary() {
 			return true
 		}
 	}
-	if errors.Is(err, contextDeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	e := strings.ToLower(err.Error())
 	return strings.Contains(e, "timeout") || strings.Contains(e, "deadline")
 }
 
-var contextDeadlineExceeded = func() error {
-	return errors.New("context deadline exceeded")
-}()
-
-func backoff(attempt int) time.Duration {
+func backoff(i int) time.Duration {
 	base := 500 * time.Millisecond
-	maxDur := 8 * time.Second
-	d := base * time.Duration(1<<attempt)
-	if d > maxDur {
-		d = maxDur
+	max := 8 * time.Second
+	d := base * time.Duration(1<<i)
+	if d > max {
+		d = max
 	}
 	j := time.Duration(rand.Int63n(int64(d/2))) - d/4
 	return d + j

@@ -14,7 +14,7 @@ import (
 	"github.com/ghostlawless/xdl/internal/utils"
 )
 
-type fetchUserResponse struct {
+type rUser struct {
 	Data struct {
 		User struct {
 			Result struct {
@@ -24,79 +24,76 @@ type fetchUserResponse struct {
 	} `json:"data"`
 }
 
-func FetchUserID(client *http.Client, conf *config.EssentialsConfig, username string) (string, error) {
-	if client == nil || conf == nil {
+func FetchUserID(cl *http.Client, cf *config.EssentialsConfig, usr string) (string, error) {
+	if cl == nil || cf == nil {
 		return "", errors.New("nil client or config")
 	}
-	if username == "" {
+	if usr == "" {
 		return "", errors.New("empty username")
 	}
 
-	endpoint, err := conf.GraphQLURL("user_by_screen_name")
+	ep, err := cf.GraphQLURL("user_by_screen_name")
 	if err != nil {
 		return "", err
 	}
 
-	varsJSON, _ := json.Marshal(map[string]string{"screen_name": username})
-	featJSON, _ := conf.FeatureJSONFor("user_by_screen_name")
-	referer := strings.TrimRight(conf.X.Network, "/") + "/" + username
+	vj, _ := json.Marshal(map[string]string{"screen_name": usr})
+	fj, _ := cf.FeatureJSONFor("user_by_screen_name")
+	ref := strings.TrimRight(cf.X.Network, "/") + "/" + usr
 
-	u := fmt.Sprintf("%s?variables=%s&features=%s",
-		endpoint, url.QueryEscape(string(varsJSON)), url.QueryEscape(featJSON),
-	)
+	q := fmt.Sprintf("%s?variables=%s&features=%s", ep, url.QueryEscape(string(vj)), url.QueryEscape(fj))
 
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+	rq, err := http.NewRequest(http.MethodGet, q, nil)
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	conf.BuildRequestHeaders(req, referer)
-	req.Header.Set("Accept", "application/json, */*;q=0.1")
+	cf.BuildRequestHeaders(rq, ref)
+	rq.Header.Set("Accept", "application/json, */*;q=0.1")
 
-	body, status, err := httpx.DoRequestWithOptions(client, req, httpx.RequestOptions{
+	b, st, err := httpx.DoRequestWithOptions(cl, rq, httpx.RequestOptions{
 		MaxBytes: 2 << 20,
 		Decode:   true,
-		Accept:   func(s int) bool { return s >= 200 && s < 300 },
 	})
 	if err != nil {
-		if conf.Runtime.DebugEnabled {
-			bodyPath, _ := utils.SaveTimestamped(conf.Paths.Debug, "err_user_by_screen_name", "json", body)
-			meta := fmt.Sprintf("METHOD: GET\nSTATUS: %d\nURL: %s\n", status, u)
-			_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_user_by_screen_name_meta", "txt", []byte(meta))
-			log.LogError("user", fmt.Sprintf("UserByScreenName failed (status %d). see: %s", status, bodyPath))
+		if cf.Runtime.DebugEnabled {
+			p, _ := utils.SaveTimestamped(cf.Paths.Debug, "err_user_by_screen_name", "json", b)
+			meta := fmt.Sprintf("METHOD: GET\nSTATUS: %d\nURL: %s\n", st, q)
+			_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_user_by_screen_name_meta", "txt", []byte(meta))
+			log.LogError("user", fmt.Sprintf("UserByScreenName failed (status %d). see: %s", st, p))
 		} else {
-			log.LogError("user", fmt.Sprintf("UserByScreenName failed (status %d). run with -d for details.", status))
+			log.LogError("user", fmt.Sprintf("UserByScreenName failed (status %d). run with -d for details.", st))
 		}
 		return "", err
 	}
 
-	var resp fetchUserResponse
-	if jerr := json.Unmarshal(body, &resp); jerr == nil && resp.Data.User.Result.RestID != "" {
-		return resp.Data.User.Result.RestID, nil
+	var rp rUser
+	if jerr := json.Unmarshal(b, &rp); jerr == nil && rp.Data.User.Result.RestID != "" {
+		return rp.Data.User.Result.RestID, nil
 	}
 
-	var generic any
-	if jerr := json.Unmarshal(body, &generic); jerr == nil {
-		if id := findUserID(generic); id != "" {
+	var g any
+	if jerr := json.Unmarshal(b, &g); jerr == nil {
+		if id := scan(g); id != "" {
 			return id, nil
 		}
 	}
 	return "", errors.New("rest_id not found in response")
 }
 
-func findUserID(v any) string {
+func scan(v any) string {
 	switch t := v.(type) {
 	case map[string]any:
 		if s, ok := t["rest_id"].(string); ok && s != "" {
 			return s
 		}
 		for _, vv := range t {
-			if id := findUserID(vv); id != "" {
+			if id := scan(vv); id != "" {
 				return id
 			}
 		}
 	case []any:
 		for _, vv := range t {
-			if id := findUserID(vv); id != "" {
+			if id := scan(vv); id != "" {
 				return id
 			}
 		}

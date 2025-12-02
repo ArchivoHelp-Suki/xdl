@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ghostlawless/xdl/internal/httpx"
 )
 
 type GraphQLOperation struct {
@@ -43,9 +46,10 @@ type PathsSection struct {
 }
 
 type RuntimeSection struct {
-	DebugEnabled   bool `json:"debug_enabled"`
-	TimeoutSeconds int  `json:"timeout_seconds"`
-	MaxRetries     int  `json:"max_retries"`
+	DebugEnabled   bool   `json:"debug_enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	MaxRetries     int    `json:"max_retries"`
+	LimiterSecret  string `json:"limiter_secret"`
 }
 
 type XSection struct {
@@ -62,20 +66,19 @@ type EssentialsConfig struct {
 	Runtime  RuntimeSection    `json:"runtime"`
 }
 
-func LoadEssentialsWithFallback(paths []string) (*EssentialsConfig, error) {
-	var lastErr error
-	for _, p := range paths {
+func LoadEssentialsWithFallback(ps []string) (*EssentialsConfig, error) {
+	var e error
+	for _, p := range ps {
 		if p == "" {
 			continue
 		}
-		data, err := os.ReadFile(p)
+		b, err := os.ReadFile(p)
 		if err != nil {
-			lastErr = err
+			e = err
 			continue
 		}
 		var cfg EssentialsConfig
-		dec := json.NewDecoder(strings.NewReader(string(data)))
-		if err := dec.Decode(&cfg); err != nil {
+		if err := json.Unmarshal(b, &cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse essentials.json: %w", err)
 		}
 		if strings.TrimSpace(cfg.X.Network) == "" {
@@ -83,8 +86,8 @@ func LoadEssentialsWithFallback(paths []string) (*EssentialsConfig, error) {
 		}
 		return &cfg, nil
 	}
-	if lastErr != nil {
-		return nil, lastErr
+	if e != nil {
+		return nil, e
 	}
 	return nil, fmt.Errorf("no essentials.json found")
 }
@@ -99,27 +102,27 @@ func (c *EssentialsConfig) HTTPTimeout() time.Duration {
 	return time.Duration(c.Runtime.TimeoutSeconds) * time.Second
 }
 
-func (c *EssentialsConfig) GraphQLURL(operationKey string) (string, error) {
+func (c *EssentialsConfig) GraphQLURL(key string) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("nil config")
 	}
 	if c.GraphQL.Operations == nil {
 		return "", fmt.Errorf("graphql.operations is empty")
 	}
-	op, ok := c.GraphQL.Operations[operationKey]
+	op, ok := c.GraphQL.Operations[key]
 	if !ok || strings.TrimSpace(op.Path) == "" {
-		return "", fmt.Errorf("unknown graphql operation: %s", operationKey)
+		return "", fmt.Errorf("unknown graphql operation: %s", key)
 	}
-	base := "https://x.com/i/api/graphql"
+	base := strings.TrimRight(c.X.Network, "/") + "/i/api/graphql"
 	return base + "/" + op.Path, nil
 }
 
-func (c *EssentialsConfig) FeatureJSONFor(operationKey string) (string, error) {
+func (c *EssentialsConfig) FeatureJSONFor(key string) (string, error) {
 	if c == nil {
 		return "{}", nil
 	}
 	var src any
-	switch operationKey {
+	switch key {
 	case "user_by_screen_name":
 		src = c.Features.User
 	case "user_media":
@@ -137,11 +140,11 @@ func (c *EssentialsConfig) FeatureJSONFor(operationKey string) (string, error) {
 	return string(b), nil
 }
 
-func (c *EssentialsConfig) BuildRequestHeaders(req *http.Request, referer string) {
+func (c *EssentialsConfig) BuildRequestHeaders(req *http.Request, ref string) {
 	if c == nil || req == nil {
 		return
 	}
-
+	httpx.ApplyConfiguredHeaders(req)
 	for k, v := range c.Headers {
 		if v == "" {
 			continue
@@ -151,31 +154,27 @@ func (c *EssentialsConfig) BuildRequestHeaders(req *http.Request, referer string
 		}
 		req.Header.Set(k, v)
 	}
-
-	if referer != "" {
-		req.Header.Set("Referer", referer)
+	if ref != "" {
+		req.Header.Set("Referer", ref)
 	}
-
 	if c.Auth.Bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Auth.Bearer)
 	}
-
 	if c.Auth.Cookies.Ct0 != "" {
 		req.Header.Set("x-csrf-token", c.Auth.Cookies.Ct0)
 	}
-
-	var cookies []string
+	var cs []string
 	if c.Auth.Cookies.GuestID != "" {
-		cookies = append(cookies, "guest_id="+c.Auth.Cookies.GuestID)
+		cs = append(cs, "guest_id="+c.Auth.Cookies.GuestID)
 	}
 	if c.Auth.Cookies.AuthToken != "" {
-		cookies = append(cookies, "auth_token="+c.Auth.Cookies.AuthToken)
+		cs = append(cs, "auth_token="+c.Auth.Cookies.AuthToken)
 	}
 	if c.Auth.Cookies.Ct0 != "" {
-		cookies = append(cookies, "ct0="+c.Auth.Cookies.Ct0)
+		cs = append(cs, "ct0="+c.Auth.Cookies.Ct0)
 	}
-	if len(cookies) > 0 {
-		req.Header.Set("Cookie", strings.Join(cookies, "; "))
+	if len(cs) > 0 {
+		req.Header.Set("Cookie", strings.Join(cs, "; "))
 	}
 }
 
@@ -187,25 +186,22 @@ type BrowserCookie struct {
 	Secure bool   `json:"secure"`
 }
 
-func ApplyCookiesFromFile(cfg *EssentialsConfig, cookiePath string) error {
+func ApplyCookiesFromFile(cfg *EssentialsConfig, p string) error {
 	if cfg == nil {
 		return fmt.Errorf("nil config")
 	}
-	if strings.TrimSpace(cookiePath) == "" {
+	if strings.TrimSpace(p) == "" {
 		return nil
 	}
-
-	data, err := os.ReadFile(cookiePath)
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return fmt.Errorf("failed to read cookie file: %w", err)
 	}
-
-	var cookies []BrowserCookie
-	if err := json.Unmarshal(data, &cookies); err != nil {
+	var cs []BrowserCookie
+	if err := json.Unmarshal(b, &cs); err != nil {
 		return fmt.Errorf("failed to parse cookie file: %w", err)
 	}
-
-	for _, c := range cookies {
+	for _, c := range cs {
 		d := strings.ToLower(strings.TrimSpace(c.Domain))
 		if !strings.Contains(d, "x.com") {
 			continue
@@ -219,6 +215,42 @@ func ApplyCookiesFromFile(cfg *EssentialsConfig, cookiePath string) error {
 			cfg.Auth.Cookies.Ct0 = c.Value
 		}
 	}
-
 	return nil
+}
+
+func SaveEssentials(cfg *EssentialsConfig, p string) error {
+	if cfg == nil {
+		return fmt.Errorf("nil config")
+	}
+	if strings.TrimSpace(p) == "" {
+		return fmt.Errorf("empty essentials path")
+	}
+	dir := filepath.Dir(p)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("failed to create essentials dir: %w", err)
+		}
+	}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal essentials: %w", err)
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return fmt.Errorf("failed to write temporary essentials: %w", err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return fmt.Errorf("failed to replace essentials: %w", err)
+	}
+	return nil
+}
+
+func ApplyCookiesFromFileAndPersist(cfg *EssentialsConfig, cp, ep string) error {
+	if err := ApplyCookiesFromFile(cfg, cp); err != nil {
+		return err
+	}
+	if strings.TrimSpace(ep) == "" {
+		return nil
+	}
+	return SaveEssentials(cfg, ep)
 }

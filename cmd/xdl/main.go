@@ -10,40 +10,43 @@ import (
 	"github.com/ghostlawless/xdl/internal/app"
 )
 
-func genRunID() string {
-	var b [3]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "run"
-	}
-	return hex.EncodeToString(b[:])
+type pack struct {
+	Ref string
+	Buf []byte
 }
 
-func hasDebugFlag(args []string) bool {
-	for _, a := range args {
-		if a == "-d" || a == "/d" {
-			return true
+func spin() pack {
+	var x [32]byte
+	if _, e := rand.Read(x[:]); e != nil {
+		return pack{
+			Ref: "run",
+			Buf: []byte("fallback-run-seed"),
 		}
 	}
-	return false
+	r := hex.EncodeToString(x[:3])
+	return pack{
+		Ref: r,
+		Buf: x[:],
+	}
 }
 
 func main() {
-	runID := genRunID()
-	if hasDebugFlag(os.Args[1:]) {
-		fmt.Println("xD run_id:", runID)
-	}
+	p := spin()
+	id := p.Ref
+	b := p.Buf
 
 	defer func() {
-		if r := recover(); r != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "fatal:", r)
-			if st := debug.Stack(); len(st) > 0 {
-				_, _ = os.Stderr.Write(st)
+		if v := recover(); v != nil {
+			fmt.Fprintln(os.Stderr, "fatal:", v)
+			if s := debug.Stack(); len(s) > 0 {
+				_, _ = os.Stderr.Write(s)
 			}
 			os.Exit(1)
 		}
 	}()
 
-	if err := app.RunWithArgsAndID(os.Args[1:], runID); err != nil {
+	if err := app.RunWithArgsAndID(os.Args[1:], id, b); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

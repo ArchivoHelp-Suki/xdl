@@ -1,10 +1,9 @@
-// file: internal/log/log.go
 package log
 
 import (
 	"fmt"
 	"io"
-	"log"
+	stdlog "log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,57 +11,81 @@ import (
 )
 
 var (
-	mu      sync.RWMutex
-	logger  *log.Logger
-	enabled = true
-	outFile io.Closer
+	mu  sync.RWMutex
+	lg  *stdlog.Logger
+	on  = true
+	out io.Closer
+)
+
+const (
+	cR  = "\033[0m"
+	cD  = "\033[2m"
+	cRd = "\033[31m"
+	cGn = "\033[32m"
+	cYl = "\033[33m"
+	cBl = "\033[34m"
+	cMg = "\033[35m"
+	cCy = "\033[36m"
 )
 
 func Init(path string) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	abs := path
-	if !filepath.IsAbs(abs) {
-		exe, _ := os.Executable()
-		base := filepath.Dir(exe)
-		abs = filepath.Join(base, path)
+	a := path
+	if !filepath.IsAbs(a) {
+		e, _ := os.Executable()
+		b := filepath.Dir(e)
+		a = filepath.Join(b, path)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		logger = log.New(os.Stderr, "", 0)
-		_ = logger.Output(2, "log init fallback stderr: "+err.Error())
+	if err := os.MkdirAll(filepath.Dir(a), 0o755); err != nil {
+		lg = stdlog.New(os.Stderr, "", 0)
+		_ = lg.Output(2, "log init fallback stderr: "+err.Error())
 		return
 	}
-	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(a, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		logger = log.New(os.Stderr, "", 0)
-		_ = logger.Output(2, "log open fallback stderr: "+err.Error())
+		lg = stdlog.New(os.Stderr, "", 0)
+		_ = lg.Output(2, "log open fallback stderr: "+err.Error())
 		return
 	}
-	outFile = f
-	logger = log.New(io.MultiWriter(f, os.Stderr), "", 0) // arquivo + console
-	enabled = true
+	out = f
+	lg = stdlog.New(io.MultiWriter(f, os.Stderr), "", 0)
+	on = true
 }
 
 func Disable() {
 	mu.Lock()
 	defer mu.Unlock()
-	enabled = false
+	on = false
 }
 
-func LogInfo(tag, msg string)  { logf("INFO", tag, msg) }
-func LogDebug(tag, msg string) { logf("DEBUG", tag, msg) }
-func LogError(tag, msg string) { logf("ERROR", tag, msg) }
+func LogInfo(tag, msg string)  { fx("INFO", tag, msg) }
+func LogDebug(tag, msg string) { fx("DEBUG", tag, msg) }
+func LogError(tag, msg string) { fx("ERROR", tag, msg) }
 
-func logf(level, tag, msg string) {
+func fx(level, tag, msg string) {
 	mu.RLock()
 	defer mu.RUnlock()
-	if !enabled {
+	if !on {
 		return
 	}
-	if logger == nil {
-		logger = log.New(os.Stderr, "", 0)
+	if lg == nil {
+		lg = stdlog.New(os.Stderr, "", 0)
 	}
+
 	ts := time.Now().Format(time.RFC3339)
-	_ = logger.Output(3, fmt.Sprintf("%s [%s] %s: %s", ts, level, tag, msg))
+	lc := cBl
+	switch level {
+	case "INFO":
+		lc = cCy
+	case "DEBUG":
+		lc = cMg
+	case "ERROR":
+		lc = cRd
+	}
+	tc := cGn
+
+	line := fmt.Sprintf("%s%s%s [%s%s%s] %s%s%s: %s", cD, ts, cR, lc, level, cR, tc, tag, cR, msg)
+	_ = lg.Output(3, line)
 }

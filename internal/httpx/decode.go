@@ -14,9 +14,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-type closerFunc func() error
+type fnc func() error
 
-func (f closerFunc) Close() error { return f() }
+func (f fnc) Close() error { return f() }
 
 func Decode(res *http.Response) ([]byte, error) {
 	return DecodeWithLimit(res, 0)
@@ -27,113 +27,111 @@ func DecodeWithLimit(res *http.Response, maxBytes int64) ([]byte, error) {
 		return nil, errors.New("nil response/body")
 	}
 	defer res.Body.Close()
-
-	reader, closers, err := buildDecoderChain(res.Body, res.Header.Get("Content-Encoding"))
+	r, cs, err := chain(res.Body, res.Header.Get("Content-Encoding"))
 	if err != nil {
 		return nil, err
 	}
 	if maxBytes > 0 {
-		reader = io.LimitReader(reader, maxBytes+1)
+		r = io.LimitReader(r, maxBytes+1)
 	}
-	body, readErr := io.ReadAll(reader)
-	closeErr := closeAll(closers)
-	if readErr != nil {
-		xlog.LogError("read decoded body", readErr.Error())
-		return nil, readErr
+	b, re := io.ReadAll(r)
+	ce := shut(cs)
+	if re != nil {
+		xlog.LogError("read decoded body", re.Error())
+		return nil, re
 	}
-	if closeErr != nil {
-		return nil, closeErr
+	if ce != nil {
+		return nil, ce
 	}
-	if maxBytes > 0 && int64(len(body)) > maxBytes {
+	if maxBytes > 0 && int64(len(b)) > maxBytes {
 		return nil, errors.New("decoded body exceeds maxBytes")
 	}
-	return body, nil
+	return b, nil
 }
 
 func StreamDecode(res *http.Response) (io.ReadCloser, error) {
 	if res == nil || res.Body == nil {
 		return nil, errors.New("nil response/body")
 	}
-	reader, closers, err := buildDecoderChain(res.Body, res.Header.Get("Content-Encoding"))
+	r, cs, err := chain(res.Body, res.Header.Get("Content-Encoding"))
 	if err != nil {
 		_ = res.Body.Close()
 		return nil, err
 	}
-	if len(closers) == 0 && strings.TrimSpace(res.Header.Get("Content-Encoding")) == "" {
+	if len(cs) == 0 && strings.TrimSpace(res.Header.Get("Content-Encoding")) == "" {
 		return res.Body, nil
 	}
-	return &multiCloser{Reader: reader, closers: closers, body: res.Body}, nil
+	return &wrap{Reader: r, cls: cs, body: res.Body}, nil
 }
 
-func buildDecoderChain(body io.ReadCloser, encHeader string) (io.Reader, []io.Closer, error) {
-	reader := io.Reader(body)
-	var closers []io.Closer
-
-	encHeader = strings.ToLower(strings.TrimSpace(encHeader))
-	if encHeader == "" {
-		return reader, closers, nil
+func chain(body io.ReadCloser, encHeader string) (io.Reader, []io.Closer, error) {
+	r := io.Reader(body)
+	var cs []io.Closer
+	enc := strings.ToLower(strings.TrimSpace(encHeader))
+	if enc == "" {
+		return r, cs, nil
 	}
-	parts := strings.Split(encHeader, ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		enc := strings.TrimSpace(parts[i])
-		switch enc {
+	ps := strings.Split(enc, ",")
+	for i := len(ps) - 1; i >= 0; i-- {
+		e := strings.TrimSpace(ps[i])
+		switch e {
 		case "", "identity":
 			continue
 		case "gzip":
-			gr, err := gzip.NewReader(reader)
+			gr, err := gzip.NewReader(r)
 			if err != nil {
 				xlog.LogError("gzip decode", err.Error())
-				closeAll(closers)
+				_ = shut(cs)
 				return nil, nil, err
 			}
-			reader = gr
-			closers = append(closers, gr)
+			r = gr
+			cs = append(cs, gr)
 		case "br":
-			reader = brotli.NewReader(reader)
+			r = brotli.NewReader(r)
 		case "zstd":
-			zr, err := zstd.NewReader(reader)
+			zr, err := zstd.NewReader(r)
 			if err != nil {
 				xlog.LogError("zstd decode", err.Error())
-				closeAll(closers)
+				_ = shut(cs)
 				return nil, nil, err
 			}
-			reader = zr
-			closers = append(closers, closerFunc(func() error { zr.Close(); return nil }))
+			r = zr
+			cs = append(cs, fnc(func() error { zr.Close(); return nil }))
 		case "deflate":
-			zr, err := zlib.NewReader(reader)
+			zr, err := zlib.NewReader(r)
 			if err != nil {
 				xlog.LogError("deflate decode", err.Error())
-				closeAll(closers)
+				_ = shut(cs)
 				return nil, nil, err
 			}
-			reader = zr
-			closers = append(closers, zr)
+			r = zr
+			cs = append(cs, zr)
 		default:
-			closeAll(closers)
-			return nil, nil, errors.New("unsupported content-encoding: " + enc)
+			_ = shut(cs)
+			return nil, nil, errors.New("unsupported content-encoding: " + e)
 		}
 	}
-	return reader, closers, nil
+	return r, cs, nil
 }
 
-type multiCloser struct {
+type wrap struct {
 	io.Reader
-	closers []io.Closer
-	body    io.Closer
+	cls  []io.Closer
+	body io.Closer
 }
 
-func (m *multiCloser) Close() error {
-	err := closeAll(m.closers)
+func (m *wrap) Close() error {
+	err := shut(m.cls)
 	if cerr := m.body.Close(); err == nil && cerr != nil {
 		err = cerr
 	}
 	return err
 }
 
-func closeAll(closers []io.Closer) error {
+func shut(cs []io.Closer) error {
 	var first error
-	for i := len(closers) - 1; i >= 0; i-- {
-		if err := closers[i].Close(); err != nil && first == nil {
+	for i := len(cs) - 1; i >= 0; i-- {
+		if err := cs[i].Close(); err != nil && first == nil {
 			first = err
 		}
 	}

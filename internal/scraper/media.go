@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ghostlawless/xdl/internal/config"
 	"github.com/ghostlawless/xdl/internal/httpx"
 	"github.com/ghostlawless/xdl/internal/log"
+	xruntime "github.com/ghostlawless/xdl/internal/runtime"
 	"github.com/ghostlawless/xdl/internal/utils"
 )
 
@@ -23,173 +24,222 @@ type Media struct {
 	Type string `json:"type"`
 }
 
-func GetMediaLinksForUser(client *http.Client, conf *config.EssentialsConfig, userID string) ([]Media, error) {
-	if client == nil || conf == nil {
+func GetMediaLinksForUser(cl *http.Client, cf *config.EssentialsConfig, uid string, sn string, vb bool, lim *xruntime.Limiter) ([]Media, error) {
+	if cl == nil || cf == nil {
 		return nil, errors.New("nil client or config")
 	}
-	if userID == "" {
+	if uid == "" {
 		return nil, errors.New("empty userID")
 	}
 
-	endpoint, err := conf.GraphQLURL("user_media")
+	ep, err := cf.GraphQLURL("user_media")
 	if err != nil {
 		return nil, err
 	}
 
-	all := make(map[string]Media, 512)
-	cursor := ""
-	page := 1
-	stagnant := 0
-	const maxPages = 200
-	seenCursors := make(map[string]struct{}, 256)
-	seenCursors[""] = struct{}{}
+	allm := make(map[string]Media, 512)
+	cur := ""
+	pg := 1
+	stg := 0
+	const mx = 200
+	seen := make(map[string]struct{}, 256)
+	seen[""] = struct{}{}
 
-	referer := strings.TrimRight(conf.X.Network, "/") + "/i/user/" + userID + "/media"
+	end := ""
+	ic := 0
+	vc := 0
+	last := 0
+	ri := 0
+	ref := strings.TrimRight(cf.X.Network, "/") + "/i/user/" + uid + "/media"
+	frames := []rune{'|', '/', '-', '\\'}
 
 	for {
+		ri++
+		if lim != nil {
+			lim.SleepBeforeRequest(context.Background(), sn, pg, ri)
+		}
+
 		vars := map[string]any{
-			"userId":                 userID,
+			"userId":                 uid,
 			"count":                  100,
 			"includePromotedContent": false,
 			"withClientEventToken":   false,
 			"withVoice":              false,
 		}
-		if cursor != "" {
-			vars["cursor"] = cursor
+		if cur != "" {
+			vars["cursor"] = cur
 		}
-		varsJSON, _ := json.Marshal(vars)
-		featJSON, _ := conf.FeatureJSONFor("user_media")
+		vj, _ := json.Marshal(vars)
+		fj, _ := cf.FeatureJSONFor("user_media")
+		q := fmt.Sprintf("%s?variables=%s&features=%s", ep, url.QueryEscape(string(vj)), url.QueryEscape(fj))
 
-		u := fmt.Sprintf("%s?variables=%s&features=%s",
-			endpoint, url.QueryEscape(string(varsJSON)), url.QueryEscape(featJSON),
-		)
-		req, gerr := http.NewRequest(http.MethodGet, u, nil)
+		rq, gerr := http.NewRequest(http.MethodGet, q, nil)
 		if gerr != nil {
 			return nil, fmt.Errorf("build request: %w", gerr)
 		}
-		conf.BuildRequestHeaders(req, referer)
-		req.Header.Set("Accept", "application/json, */*;q=0.1")
+		cf.BuildRequestHeaders(rq, ref)
+		rq.Header.Set("Accept", "application/json, */*;q=0.1")
 
-		prevTotal := len(all)
-		body, status, err := httpx.DoRequestWithOptions(client, req, httpx.RequestOptions{
+		prev := len(allm)
+		b, st, err := httpx.DoRequestWithOptions(cl, rq, httpx.RequestOptions{
 			MaxBytes: 8 << 20,
 			Decode:   true,
 			Accept:   func(s int) bool { return s >= 200 && s < 300 },
 		})
 		if err != nil {
-			if conf.Runtime.DebugEnabled {
-				bodyPath, _ := utils.SaveTimestamped(conf.Paths.Debug, "err_user_media", "json", body)
-				meta := fmt.Sprintf("METHOD: GET\nSTATUS: %d\nURL: %s\nPAGE: %d\nCURSOR: %s\n", status, u, page, cursor)
-				_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_user_media_meta", "txt", []byte(meta))
-				log.LogError("media", fmt.Sprintf("UserMedia failed (status %d). see: %s", status, bodyPath))
+			if cf.Runtime.DebugEnabled {
+				p, _ := utils.SaveTimestamped(cf.Paths.Debug, "err_user_media", "json", b)
+				meta := fmt.Sprintf("METHOD: GET\nSTATUS: %d\nURL: %s\nPAGE: %d\nCURSOR: %s\n", st, q, pg, cur)
+				_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_user_media_meta", "txt", []byte(meta))
+				log.LogError("media", fmt.Sprintf("UserMedia failed (status %d). see: %s", st, p))
 			} else {
-				log.LogError("media", fmt.Sprintf("UserMedia failed (status %d). run with -d for details.", status))
+				log.LogError("media", fmt.Sprintf("UserMedia failed (status %d). run with -d for details.", st))
 			}
+			end = "http_error"
 			break
 		}
 
-		pageMedias, jerr := extractMediaFromBody(body)
+		pms, jerr := fold(b)
 		if jerr != nil {
-			if conf.Runtime.DebugEnabled {
-				bodyPath, _ := utils.SaveTimestamped(conf.Paths.Debug, "err_user_media_parse", "json", body)
-				meta := fmt.Sprintf("PARSE_ERROR: %v\nPAGE: %d\nCURSOR: %s\n", jerr, page, cursor)
-				_, _ = utils.SaveTimestamped(conf.Paths.Debug, "err_user_media_parse_meta", "txt", []byte(meta))
-				log.LogError("media", fmt.Sprintf("parse page %d failed. see: %s", page, bodyPath))
+			if cf.Runtime.DebugEnabled {
+				p, _ := utils.SaveTimestamped(cf.Paths.Debug, "err_user_media_parse", "json", b)
+				meta := fmt.Sprintf("PARSE_ERROR: %v\nPAGE: %d\nCURSOR: %s\n", jerr, pg, cur)
+				_, _ = utils.SaveTimestamped(cf.Paths.Debug, "err_user_media_parse_meta", "txt", []byte(meta))
+				log.LogError("media", fmt.Sprintf("parse page %d failed. see: %s", pg, p))
 			} else {
-				log.LogError("media", fmt.Sprintf("parse page %d failed.", page))
+				log.LogError("media", fmt.Sprintf("parse page %d failed.", pg))
 			}
+			end = "parse_error"
 			break
 		}
-		for _, m := range pageMedias {
-			all[m.URL] = m
+
+		for _, m := range pms {
+			if _, ok := allm[m.URL]; !ok {
+				allm[m.URL] = m
+				if m.Type == "image" {
+					ic++
+				} else if m.Type == "video" {
+					vc++
+				}
+			}
 		}
 
-		if len(all) == prevTotal {
-			stagnant++
+		now := len(allm)
+		if now == prev {
+			stg++
 		} else {
-			stagnant = 0
+			stg = 0
 		}
-		if stagnant >= 3 {
+
+		if cf.Runtime.DebugEnabled {
+			d := now - prev
+			log.LogInfo("media", fmt.Sprintf("page %d: +%d (total %d)", pg, d, now))
+		}
+
+		if vb {
+			t := len(allm)
+			fr := frames[(pg-1)%len(frames)]
+			line := fmt.Sprintf("xdl ▸ scanning media for target @%s [%c] — page:%d images:%d videos:%d (total:%d)", sn, fr, pg, ic, vc, t)
+			if len(line) < last {
+				line += strings.Repeat(" ", last-len(line))
+			}
+			last = len(line)
+			fmt.Printf("\r\033[2K%s", line)
+		}
+
+		if stg >= 3 {
 			log.LogInfo("media", "no progress for 3 pages — stopping")
+			end = "no_progress"
 			break
 		}
 
-		next := extractNextCursor(body)
-		if next == "" {
+		nx := next(b)
+		if nx == "" {
 			log.LogInfo("media", "no next cursor — reached end of timeline")
+			end = "no_next_cursor"
 			break
 		}
-		if _, dup := seenCursors[next]; dup {
+		if _, dup := seen[nx]; dup {
 			log.LogInfo("media", "repeated cursor detected — stopping")
+			end = "repeat_cursor"
 			break
 		}
-		seenCursors[next] = struct{}{}
+		seen[nx] = struct{}{}
 
-		if page >= maxPages {
-			log.LogInfo("media", fmt.Sprintf("max pages reached (%d) — stopping", maxPages))
+		if pg >= mx {
+			log.LogInfo("media", fmt.Sprintf("max pages reached (%d) — stopping", mx))
+			end = "max_pages"
 			break
 		}
 
-		cursor = next
-		page++
-		time.Sleep(300 * time.Millisecond)
+		cur = nx
+		pg++
 	}
 
-	keys := make([]string, 0, len(all))
-	for k := range all {
+	if vb && last > 0 {
+		fmt.Print("\n")
+	}
+
+	keys := make([]string, 0, len(allm))
+	for k := range allm {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	out := make([]Media, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, all[k])
+		out = append(out, allm[k])
 	}
+
 	log.LogInfo("media", fmt.Sprintf("Total unique media found: %d", len(out)))
+
+	if end == "no_progress" || end == "no_next_cursor" || end == "repeat_cursor" || end == "max_pages" {
+		log.LogInfo("media", fmt.Sprintf("UserMedia endpoint reached its server-side end at page %d. This feed may expose fewer items than the media counter shown in the profile UI.", pg))
+	}
+
 	return out, nil
 }
 
-func extractMediaFromBody(body []byte) ([]Media, error) {
-	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
+func fold(b []byte) ([]Media, error) {
+	var r any
+	if err := json.Unmarshal(b, &r); err != nil {
 		return nil, err
 	}
-	agg := make(map[string]mediaAgg, 256)
-	walkForLegacyMedia(root, agg)
-
-	out := make([]Media, 0, len(agg))
-	for _, v := range agg {
+	ag := make(map[string]mAgg, 256)
+	walk(r, ag)
+	out := make([]Media, 0, len(ag))
+	for _, v := range ag {
 		out = append(out, Media{URL: v.URL, Type: v.Type})
 	}
 	return out, nil
 }
 
-type mediaAgg struct {
+type mAgg struct {
 	URL     string
 	Type    string
 	Bitrate int
 }
 
-func walkForLegacyMedia(v any, agg map[string]mediaAgg) {
+func walk(v any, ag map[string]mAgg) {
 	switch t := v.(type) {
 	case map[string]any:
 		if leg, ok := t["legacy"].(map[string]any); ok {
-			collectFromLegacy(leg, agg)
+			gather(leg, ag)
 		}
 		if _, ok := t["extended_entities"]; ok {
-			collectFromLegacy(t, agg)
+			gather(t, ag)
 		}
 		for _, vv := range t {
-			walkForLegacyMedia(vv, agg)
+			walk(vv, ag)
 		}
 	case []any:
 		for _, it := range t {
-			walkForLegacyMedia(it, agg)
+			walk(it, ag)
 		}
 	}
 }
 
-func collectFromLegacy(node map[string]any, agg map[string]mediaAgg) {
-	ee, ok := node["extended_entities"].(map[string]any)
+func gather(n map[string]any, ag map[string]mAgg) {
+	ee, ok := n["extended_entities"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -203,34 +253,33 @@ func collectFromLegacy(node map[string]any, agg map[string]mediaAgg) {
 			continue
 		}
 		typ := strings.ToLower(str(m["type"]))
-		id := mediaID(m)
+		id := mid(m)
 		if id == "" {
-			id = parseMediaIDFromURL(str(m["media_url_https"]))
+			id = midFrom(str(m["media_url_https"]))
 		}
 		if id == "" {
 			continue
 		}
-
 		switch typ {
 		case "photo":
-			u := normalizeImageURL(str(m["media_url_https"]))
+			u := norm(str(m["media_url_https"]))
 			if u == "" {
 				continue
 			}
-			agg[id] = mediaAgg{URL: u, Type: "image"}
+			ag[id] = mAgg{URL: u, Type: "image"}
 		case "video", "animated_gif":
-			u, br := bestVideoVariant(m)
+			u, br := best(m)
 			if u == "" {
 				continue
 			}
-			if prev, ok := agg[id]; !ok || br > prev.Bitrate {
-				agg[id] = mediaAgg{URL: u, Type: "video", Bitrate: br}
+			if prev, ok := ag[id]; !ok || br > prev.Bitrate {
+				ag[id] = mAgg{URL: u, Type: "video", Bitrate: br}
 			}
 		}
 	}
 }
 
-func mediaID(m map[string]any) string {
+func mid(m map[string]any) string {
 	if s := str(m["id_str"]); s != "" {
 		return s
 	}
@@ -243,7 +292,7 @@ func mediaID(m map[string]any) string {
 	return ""
 }
 
-func normalizeImageURL(u string) string {
+func norm(u string) string {
 	if u == "" {
 		return ""
 	}
@@ -265,18 +314,18 @@ func normalizeImageURL(u string) string {
 	return pu.String()
 }
 
-func bestVideoVariant(m map[string]any) (string, int) {
+func best(m map[string]any) (string, int) {
 	vi, ok := m["video_info"].(map[string]any)
 	if !ok {
 		return "", 0
 	}
-	variants, ok := vi["variants"].([]any)
-	if !ok || len(variants) == 0 {
+	vs, ok := vi["variants"].([]any)
+	if !ok || len(vs) == 0 {
 		return "", 0
 	}
-	bestURL := ""
-	bestBR := -1
-	for _, it := range variants {
+	u := ""
+	br := -1
+	for _, it := range vs {
 		mv, ok := it.(map[string]any)
 		if !ok {
 			continue
@@ -285,26 +334,26 @@ func bestVideoVariant(m map[string]any) (string, int) {
 		if !strings.Contains(ct, "video/mp4") {
 			continue
 		}
-		u := str(mv["url"])
-		if u == "" {
+		x := str(mv["url"])
+		if x == "" {
 			continue
 		}
-		br := 0
+		b := 0
 		if f, ok := mv["bitrate"].(float64); ok {
-			br = int(f)
+			b = int(f)
 		}
-		if br > bestBR {
-			bestBR = br
-			bestURL = u
+		if b > br {
+			br = b
+			u = x
 		}
 	}
-	if bestURL == "" {
+	if u == "" {
 		return "", 0
 	}
-	return bestURL, bestBR
+	return u, br
 }
 
-func parseMediaIDFromURL(u string) string {
+func midFrom(u string) string {
 	if u == "" {
 		return ""
 	}
@@ -318,18 +367,18 @@ func parseMediaIDFromURL(u string) string {
 	return base
 }
 
-func extractNextCursor(body []byte) string {
-	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
+func next(b []byte) string {
+	var r any
+	if err := json.Unmarshal(b, &r); err != nil {
 		return ""
 	}
-	if v := findBottomCursor(root); v != "" {
+	if v := bottom(r); v != "" {
 		return v
 	}
-	return findAnyCursor(root)
+	return anyc(r)
 }
 
-func findBottomCursor(v any) string {
+func bottom(v any) string {
 	switch t := v.(type) {
 	case map[string]any:
 		if strings.EqualFold(str(t["cursorType"]), "Bottom") {
@@ -338,13 +387,13 @@ func findBottomCursor(v any) string {
 			}
 		}
 		for _, vv := range t {
-			if got := findBottomCursor(vv); got != "" {
+			if got := bottom(vv); got != "" {
 				return got
 			}
 		}
 	case []any:
 		for _, it := range t {
-			if got := findBottomCursor(it); got != "" {
+			if got := bottom(it); got != "" {
 				return got
 			}
 		}
@@ -352,7 +401,7 @@ func findBottomCursor(v any) string {
 	return ""
 }
 
-func findAnyCursor(v any) string {
+func anyc(v any) string {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, vv := range t {
@@ -363,13 +412,13 @@ func findAnyCursor(v any) string {
 			}
 		}
 		for _, vv := range t {
-			if got := findAnyCursor(vv); got != "" {
+			if got := anyc(vv); got != "" {
 				return got
 			}
 		}
 	case []any:
 		for _, it := range t {
-			if got := findAnyCursor(it); got != "" {
+			if got := anyc(it); got != "" {
 				return got
 			}
 		}

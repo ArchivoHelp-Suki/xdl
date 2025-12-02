@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,64 +21,134 @@ import (
 type RequestOptions struct {
 	MaxBytes int64
 	Decode   bool
-	Accept   func(status int) bool
+	Accept   func(int) bool
 }
 
-func DoRequestWithOptions(client *http.Client, req *http.Request, opt RequestOptions) ([]byte, int, error) {
-	res, err := client.Do(req)
+func ualist() []string {
+	return []string{
+		"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
+		"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Edg/139.0.0.0 Mobile Safari/537.36",
+	}
+}
+
+func uapick(u *url.URL) string {
+	l := ualist()
+	if len(l) == 0 {
+		return "Mozilla/5.0"
+	}
+	k := ""
+	if u != nil {
+		k = strings.ToLower(u.Host) + u.Path
+	}
+	if k == "" {
+		return l[0]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(k))
+	i := int(h.Sum32() % uint32(len(l)))
+	return l[i]
+}
+
+func stdh(rq *http.Request) {
+	if rq == nil {
+		return
+	}
+	if rq.Header.Get("User-Agent") == "" {
+		ua := strings.TrimSpace(os.Getenv("XDL_UA"))
+		if ua == "" {
+			ua = uapick(rq.URL)
+		}
+		rq.Header.Set("User-Agent", ua)
+	}
+	if rq.Header.Get("Accept") == "" {
+		ac := strings.TrimSpace(os.Getenv("XDL_ACCEPT"))
+		if ac == "" {
+			ac = "*/*"
+		}
+		rq.Header.Set("Accept", ac)
+	}
+}
+
+func DoRequestWithOptions(cl *http.Client, rq *http.Request, op RequestOptions) ([]byte, int, error) {
+	if cl == nil || rq == nil {
+		return nil, 0, errors.New("nil client or request")
+	}
+	stdh(rq)
+	rq.Header.Set("Referer", "https://x.com/")
+	res, err := cl.Do(rq)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer res.Body.Close()
-	status := res.StatusCode
-	if opt.Accept == nil {
-		opt.Accept = func(s int) bool { return s >= 200 && s < 300 }
+	st := res.StatusCode
+	if op.Accept == nil {
+		op.Accept = func(s int) bool { return s >= 200 && s < 300 }
 	}
-
-	var r io.Reader = res.Body
-	if opt.Decode {
+	var rd io.Reader = res.Body
+	if op.Decode {
 		switch strings.ToLower(res.Header.Get("Content-Encoding")) {
 		case "gzip":
-			gz, err := gzip.NewReader(res.Body)
+			g, err := gzip.NewReader(res.Body)
 			if err == nil {
-				defer gz.Close()
-				r = gz
+				defer g.Close()
+				rd = g
 			}
 		case "br":
-			r = brotli.NewReader(res.Body)
+			rd = brotli.NewReader(res.Body)
 		case "zstd":
 			zr, err := zstd.NewReader(res.Body)
 			if err == nil {
 				defer zr.Close()
-				r = zr
+				rd = zr
 			}
 		}
 	}
-	reader := r
-	if opt.MaxBytes > 0 {
-		reader = io.LimitReader(r, opt.MaxBytes)
+	if op.MaxBytes > 0 {
+		rd = io.LimitReader(rd, op.MaxBytes)
 	}
-	body, err := io.ReadAll(reader)
-	if err != nil {
-		return body, status, err
+	b, rerr := io.ReadAll(rd)
+	if rerr != nil {
+		return b, st, rerr
 	}
-	if !opt.Accept(status) {
-		return body, status, fmt.Errorf("unacceptable HTTP status: %d", status)
+	if !op.Accept(st) {
+		return b, st, fmt.Errorf("unacceptable HTTP status: %d", st)
 	}
-	return body, status, nil
+	return b, st, nil
 }
 
-func Head(client *http.Client, rawURL, referer string) (http.Header, int64, string, int, error) {
-	req, err := http.NewRequest(http.MethodHead, rawURL, nil)
+func refFrom(raw, hint string) string {
+	if hint != "" {
+		return hint
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	h := strings.ToLower(u.Host)
+	p := u.Path
+	if strings.Contains(h, "x.com") {
+		if p != "" && p != "/" {
+			return u.Scheme + "://" + u.Host + p
+		}
+		return u.Scheme + "://" + u.Host
+	}
+	if strings.Contains(h, "twimg.com") {
+		return "https://x.com/"
+	}
+	return ""
+}
+
+func Head(cl *http.Client, raw, ref string) (http.Header, int64, string, int, error) {
+	if cl == nil {
+		return nil, 0, "", 0, errors.New("nil client")
+	}
+	rq, err := http.NewRequest(http.MethodHead, raw, nil)
 	if err != nil {
 		return nil, 0, "", 0, err
 	}
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	res, err := client.Do(req)
+	stdh(rq)
+	rq.Header.Set("Referer", "https://x.com/")
+	res, err := cl.Do(rq)
 	if err != nil {
 		return nil, 0, "", 0, err
 	}
@@ -84,78 +156,79 @@ func Head(client *http.Client, rawURL, referer string) (http.Header, int64, stri
 	return res.Header.Clone(), res.ContentLength, res.Header.Get("Content-Type"), res.StatusCode, nil
 }
 
-func DownloadToFile(client *http.Client, req *http.Request, destPath string, maxBytes int64) (int64, int, error) {
-	res, err := client.Do(req)
+func DownloadToFile(cl *http.Client, rq *http.Request, dst string, max int64) (int64, int, error) {
+	if cl == nil || rq == nil {
+		return 0, 0, errors.New("nil client or request")
+	}
+	stdh(rq)
+	rq.Header.Set("Referer", "https://x.com/")
+	res, err := cl.Do(rq)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		io.Copy(io.Discard, res.Body)
+		_, _ = io.Copy(io.Discard, res.Body)
 		return 0, res.StatusCode, fmt.Errorf("unacceptable HTTP status: %d", res.StatusCode)
 	}
-
-	dir := filepath.Dir(destPath)
-	base := filepath.Base(destPath)
-	tmpFile, err := os.CreateTemp(dir, base+".tmp-*")
+	dir := filepath.Dir(dst)
+	base := filepath.Base(dst)
+	tmp, err := os.CreateTemp(dir, base+".tmp-*")
 	if err != nil {
-		io.Copy(io.Discard, res.Body)
+		_, _ = io.Copy(io.Discard, res.Body)
 		return 0, res.StatusCode, err
 	}
-	tmpPath := tmpFile.Name()
-
+	tpath := tmp.Name()
 	var src io.Reader = res.Body
-	if maxBytes > 0 {
-		src = io.LimitReader(res.Body, maxBytes)
+	if max > 0 {
+		src = io.LimitReader(res.Body, max)
 	}
-	n, copyErr := io.Copy(tmpFile, src)
-	closeErr := tmpFile.Close()
-	if copyErr != nil {
-		_ = os.Remove(tmpPath)
-		return n, res.StatusCode, copyErr
+	n, cerr := io.Copy(tmp, src)
+	clos := tmp.Close()
+	if cerr != nil {
+		_ = os.Remove(tpath)
+		return n, res.StatusCode, cerr
 	}
-	if closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return n, res.StatusCode, closeErr
+	if clos != nil {
+		_ = os.Remove(tpath)
+		return n, res.StatusCode, clos
 	}
-
-	if _, err := os.Stat(destPath); err == nil {
-		_ = os.Remove(destPath)
+	if _, err := os.Stat(dst); err == nil {
+		_ = os.Remove(dst)
 	}
-	if err := os.Rename(tmpPath, destPath); err == nil {
+	if err := os.Rename(tpath, dst); err == nil {
 		return n, res.StatusCode, nil
 	}
-
-	in, err := os.Open(tmpPath)
+	in, err := os.Open(tpath)
 	if err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tpath)
 		return n, res.StatusCode, err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tpath)
 		return n, res.StatusCode, err
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
-		_ = os.Remove(destPath)
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(dst)
+		_ = os.Remove(tpath)
 		return n, res.StatusCode, err
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(destPath)
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(dst)
+		_ = os.Remove(tpath)
 		return n, res.StatusCode, err
 	}
-	_ = os.Remove(tmpPath)
+	_ = os.Remove(tpath)
 	return n, res.StatusCode, nil
 }
 
 var ErrNot2xx = errors.New("non-2xx response")
 
-func InferExt(contentType, rawURL, mediaType string) string {
-	l := strings.ToLower(contentType)
+func InferExt(ct, raw, mt string) string {
+	l := strings.ToLower(ct)
 	switch {
 	case strings.Contains(l, "video/mp4"):
 		return "mp4"
@@ -170,7 +243,7 @@ func InferExt(contentType, rawURL, mediaType string) string {
 	case strings.Contains(l, "image/webp"):
 		return "webp"
 	}
-	u := strings.ToLower(strings.Split(rawURL, "?")[0])
+	u := strings.ToLower(strings.Split(raw, "?")[0])
 	switch {
 	case strings.HasSuffix(u, ".mp4"):
 		return "mp4"
@@ -185,22 +258,25 @@ func InferExt(contentType, rawURL, mediaType string) string {
 	case strings.HasSuffix(u, ".webp"):
 		return "webp"
 	}
-	if mediaType == "video" {
+	if mt == "video" {
 		return "mp4"
 	}
-	if mediaType == "image" {
+	if mt == "image" {
 		return "jpg"
 	}
 	return ""
 }
 
-func DownloadToFileWithTimeout(client *http.Client, req *http.Request, destPath string, maxBytes int64, perAttemptTimeout time.Duration) (int64, int, error) {
-	ctx := req.Context()
-	if perAttemptTimeout > 0 {
+func DownloadToFileWithTimeout(cl *http.Client, rq *http.Request, dst string, max int64, per time.Duration) (int64, int, error) {
+	if cl == nil || rq == nil {
+		return 0, 0, errors.New("nil client or request")
+	}
+	ctx := rq.Context()
+	if per > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, perAttemptTimeout)
+		ctx, cancel = context.WithTimeout(ctx, per)
 		defer cancel()
 	}
-	req = req.Clone(ctx)
-	return DownloadToFile(client, req, destPath, maxBytes)
+	rq = rq.Clone(ctx)
+	return DownloadToFile(cl, rq, dst, max)
 }

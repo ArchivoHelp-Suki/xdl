@@ -13,22 +13,67 @@ import (
 	xlog "github.com/ghostlawless/xdl/internal/log"
 )
 
-func EnsureDir(dir string) error {
-	if dir == "" {
+const (
+	cR  = "\033[0m"
+	cCy = "\033[36;1m"
+	cGn = "\033[32;1m"
+	cYl = "\033[33;1m"
+	cRd = "\033[31;1m"
+)
+
+var srep = strings.NewReplacer(
+	"/", "_",
+	"\\", "_",
+	":", "_",
+	"*", "_",
+	"?", "_",
+	"\"", "_",
+	"<", "_",
+	">", "_",
+	"|", "_",
+)
+
+func pf(c string) string { return c + "xdl ▸" + cR }
+
+func PrintInfo(f string, a ...any) { fmt.Fprintf(os.Stdout, "%s %s\n", pf(cCy), fmt.Sprintf(f, a...)) }
+func PrintSuccess(f string, a ...any) {
+	fmt.Fprintf(os.Stdout, "%s %s\n", pf(cGn), fmt.Sprintf(f, a...))
+}
+func PrintWarn(f string, a ...any)  { fmt.Fprintf(os.Stderr, "%s %s\n", pf(cYl), fmt.Sprintf(f, a...)) }
+func PrintError(f string, a ...any) { fmt.Fprintf(os.Stderr, "%s %s\n", pf(cRd), fmt.Sprintf(f, a...)) }
+
+func PrintBanner() {
+	const b = `
+           /$$$$$$$  
+          | $$__  $$ 
+ /$$   /$$| $$  \ $$
+|  $$ /$$/| $$  | $$
+ \  $$$$/ | $$  | $$
+  >$$  $$ | $$  | $$
+ /$$/\  $$| $$$$$$$/
+|__/  \__/|_______/ 
+
+xdl ▸ x Downloader
+`
+	fmt.Fprintf(os.Stdout, "%s%s%s\n", cCy, b, cR)
+}
+
+func EnsureDir(p string) error {
+	if p == "" {
 		return fmt.Errorf("empty dir")
 	}
-	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+	if st, err := os.Stat(p); err == nil && st.IsDir() {
 		return nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(p, 0o755); err != nil {
 		xlog.LogError("utils.ensure_dir", err.Error())
 		return err
 	}
 	return nil
 }
 
-func DirExists(dir string) bool {
-	st, err := os.Stat(dir)
+func DirExists(p string) bool {
+	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
 }
 
@@ -36,19 +81,7 @@ func SanitizeFilename(name string) string {
 	if name == "" {
 		return "file"
 	}
-	name = filepath.Base(name)
-	r := strings.NewReplacer(
-		"/", "_",
-		"\\", "_",
-		":", "_",
-		"*", "_",
-		"?", "_",
-		"\"", "_",
-		"<", "_",
-		">", "_",
-		"|", "_",
-	)
-	name = r.Replace(name)
+	name = srep.Replace(filepath.Base(name))
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "file"
@@ -56,93 +89,90 @@ func SanitizeFilename(name string) string {
 	return strings.TrimRight(name, ". ")
 }
 
-func SaveToFile(path string, data []byte) error {
-	if path == "" {
+func SaveToFile(p string, data []byte) error {
+	if p == "" {
 		return fmt.Errorf("empty path")
 	}
-	if err := EnsureDir(filepath.Dir(path)); err != nil {
+	if err := EnsureDir(filepath.Dir(p)); err != nil {
 		return err
 	}
-
-	base := filepath.Base(path)
-	tmp, err := os.CreateTemp(filepath.Dir(path), base+".tmp-*")
+	base := filepath.Base(p)
+	tmp, err := os.CreateTemp(filepath.Dir(p), base+".tmp-*")
 	if err != nil {
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
-	tmpPath := tmp.Name()
+	tp := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
-
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Remove(path)
+	if _, err := os.Stat(p); err == nil {
+		_ = os.Remove(p)
 	}
-	if err := os.Rename(tmpPath, path); err == nil {
+	if err := os.Rename(tp, p); err == nil {
 		return nil
 	}
-
-	in, err := os.Open(tmpPath)
+	in, err := os.Open(tp)
 	if err != nil {
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	out, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		in.Close()
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
 	if _, err := out.ReadFrom(in); err != nil {
 		out.Close()
 		in.Close()
-		_ = os.Remove(path)
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(p)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
 	if err := out.Close(); err != nil {
 		in.Close()
-		_ = os.Remove(path)
-		_ = os.Remove(tmpPath)
+		_ = os.Remove(p)
+		_ = os.Remove(tp)
 		xlog.LogError("utils.save_file", err.Error())
 		return err
 	}
 	in.Close()
-	_ = os.Remove(tmpPath)
+	_ = os.Remove(tp)
 	return nil
 }
 
-func SaveText(path string, text string) error {
-	return SaveToFile(path, []byte(text))
+func SaveText(p string, s string) error {
+	return SaveToFile(p, []byte(s))
 }
 
-func SaveTimestamped(baseDir, prefix, ext string, data []byte) (string, error) {
-	if baseDir == "" {
+func SaveTimestamped(dir, pref, ext string, data []byte) (string, error) {
+	if dir == "" {
 		return "", fmt.Errorf("empty baseDir")
 	}
-	if err := EnsureDir(baseDir); err != nil {
+	if err := EnsureDir(dir); err != nil {
 		return "", err
 	}
 	ts := time.Now().Format("20060102_150405.000000000")
 	sfx := randHex(4)
-	prefix = SanitizeFilename(prefix)
+	pref = SanitizeFilename(pref)
 	ext = strings.TrimPrefix(ext, ".")
 	if ext == "" {
 		ext = "bin"
 	}
-	name := fmt.Sprintf("%s_%s_%s.%s", prefix, ts, sfx, ext)
-	full := filepath.Join(baseDir, name)
+	name := fmt.Sprintf("%s_%s_%s.%s", pref, ts, sfx, ext)
+	full := filepath.Join(dir, name)
 	if err := SaveToFile(full, data); err != nil {
 		return "", err
 	}
@@ -150,12 +180,12 @@ func SaveTimestamped(baseDir, prefix, ext string, data []byte) (string, error) {
 	return full, nil
 }
 
-func SaveJSONDebug(baseDir, name string, content []byte) {
-	if baseDir == "" || name == "" {
+func SaveJSONDebug(dir, name string, b []byte) {
+	if dir == "" || name == "" {
 		xlog.LogError("utils.save_json_debug", "invalid baseDir/name")
 		return
 	}
-	if err := EnsureDir(baseDir); err != nil {
+	if err := EnsureDir(dir); err != nil {
 		xlog.LogError("utils.save_json_debug", err.Error())
 		return
 	}
@@ -163,16 +193,16 @@ func SaveJSONDebug(baseDir, name string, content []byte) {
 	if !strings.HasSuffix(strings.ToLower(name), ".json") {
 		name += ".json"
 	}
-	path := filepath.Join(baseDir, name)
-	if err := SaveToFile(path, content); err != nil {
+	p := filepath.Join(dir, name)
+	if err := SaveToFile(p, b); err != nil {
 		xlog.LogError("utils.save_json_debug", err.Error())
 		return
 	}
-	xlog.LogInfo("debug", "saved: "+path)
+	xlog.LogInfo("debug", "saved: "+p)
 }
 
-func PromptYesNoDefaultYes(question string) bool {
-	fmt.Fprint(os.Stdout, question)
+func PromptYesNoDefaultYes(q string) bool {
+	fmt.Fprint(os.Stdout, q)
 	in := bufio.NewReader(os.Stdin)
 	line, _ := in.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
