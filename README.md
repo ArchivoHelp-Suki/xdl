@@ -49,13 +49,13 @@ go build -o xdl.exe ./cmd/xdl   # Windows
 ## 🚀 Usage
 
 ```bash
-xdl lawlessmedusax
+xdl -c cookies.json USERNAME
 ```
 
 Example:
 
 ```bash
-xdl lawlessmedusax
+xdl -c cookies.json lawlessmedusax
 ```
 
 ---
