@@ -36,6 +36,7 @@ config/cookies.json
 Requires **Go 1.21+**
 
 ```bash
+<<<<<<< HEAD
 # Clone **one** of the repositories:
 git clone https://github.com/ghostlawless/xdl.git  # For GitHub (Primary)
 # or
@@ -46,6 +47,17 @@ cd xdl
 
 # Build
 go build -o xdl ./cmd/xdl       # Linux / macOS  
+=======
+#Clone **one** of the repositories:
+git clone https://github.com/ghostlawless/xdl.git # For github (Primary)
+git clone https://gitlab.com/medusax/xdl # For gitlab (Mirror)
+
+#Enter the project directory:
+cd xdl
+
+#Build
+go build -o xdl ./cmd/xdl       # Linux / macOS
+>>>>>>> 68bee1da7bb39ec1720c238e1dfc702818089dd9
 go build -o xdl.exe ./cmd/xdl   # Windows
 ```
 
