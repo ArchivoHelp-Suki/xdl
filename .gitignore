@@ -1,11 +1,8 @@
 bin/
 dist/
-*.test
 logs/
 debug/
 xDownloads/
-xD/
 *.log
-config/debug/
 config/cookies.json
 .env

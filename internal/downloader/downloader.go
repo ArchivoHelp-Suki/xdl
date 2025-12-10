@@ -1,3 +1,4 @@
+// file: internal/downloader/downloader.go (package path conforme seu projeto)
 package downloader
 
 import (
@@ -6,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"net"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +37,11 @@ type Options struct {
 	ShouldPause       func() bool
 	ShouldQuit        func() bool
 	Checkpoint        *Checkpoint
+
+	Concurrency         int
+	BatchSize           int
+	JobJitterMax        time.Duration
+	JitterDeterministic bool
 }
 
 type Summary struct {
@@ -95,8 +103,19 @@ func DownloadAllCycles(cl *http.Client, cf *config.EssentialsConfig, ms []scrape
 	if len(it) == 0 {
 		return s, nil
 	}
+
+	cc := opt.Concurrency
+	if cc <= 0 {
+		cc = runtime.NumCPU()
+	}
+	bs := opt.BatchSize
+	if bs <= 0 {
+		bs = cc * 2
+	}
+
 	pd := make([]item, len(it))
 	copy(pd, it)
+
 	for len(pd) > 0 {
 		if opt.ShouldQuit != nil && opt.ShouldQuit() {
 			return s, errors.New("download aborted by user")
@@ -112,12 +131,14 @@ func DownloadAllCycles(cl *http.Client, cf *config.EssentialsConfig, ms []scrape
 				return s, errors.New("download aborted by user")
 			}
 		}
-		k := 3 + rand.Intn(13)
+
+		k := bs
 		if k > len(pd) {
 			k = len(pd)
 		}
 		b := pd[:k]
 		pd = pd[k:]
+
 		ok, sk, fl, by := doBatch(cl, cf, b, ds, opt, cp)
 		s.Downloaded += ok
 		s.Skipped += sk
@@ -147,11 +168,33 @@ func (sd bins) all() []string {
 func doBatch(cl *http.Client, cf *config.EssentialsConfig, b []item, ds bins, opt Options, cp *Checkpoint) (ok, sk, fl int, by int64) {
 	var wg sync.WaitGroup
 	wg.Add(len(b))
+
+	cc := opt.Concurrency
+	if cc <= 0 {
+		cc = runtime.NumCPU()
+	}
+	sem := make(chan struct{}, cc)
+
 	var mu sync.Mutex
 	for _, it := range b {
 		it := it
+		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
+			defer func() { <-sem }()
+
+			if d := calcJobJitter(it, opt); d > 0 {
+				if err := waitDurationWithControls(d, opt); err != nil {
+					mu.Lock()
+					fl++
+					if cp != nil {
+						cp.MarkByURL(it.URL, CheckpointFailed, 0)
+					}
+					mu.Unlock()
+					return
+				}
+			}
+
 			if opt.ShouldQuit != nil && opt.ShouldQuit() {
 				mu.Lock()
 				fl++
@@ -161,6 +204,7 @@ func doBatch(cl *http.Client, cf *config.EssentialsConfig, b []item, ds bins, op
 				mu.Unlock()
 				return
 			}
+
 			r := doOne(cl, cf, it, ds, opt)
 			mu.Lock()
 			defer mu.Unlock()
@@ -340,4 +384,45 @@ func backoff(i int) time.Duration {
 	}
 	j := time.Duration(rand.Int63n(int64(d/2))) - d/4
 	return d + j
+}
+
+func calcJobJitter(it item, opt Options) time.Duration {
+	if opt.JobJitterMax <= 0 {
+		return 0
+	}
+	if opt.JitterDeterministic {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(opt.User))
+		_, _ = h.Write([]byte("|"))
+		_, _ = h.Write([]byte(it.URL))
+		return time.Duration(h.Sum64() % uint64(opt.JobJitterMax))
+	}
+
+	return time.Duration(rand.Int63n(int64(opt.JobJitterMax)))
+}
+
+func waitDurationWithControls(d time.Duration, opt Options) error {
+	if d <= 0 {
+		return nil
+	}
+	start := time.Now()
+	tick := 50 * time.Millisecond
+	for {
+		if opt.ShouldQuit != nil && opt.ShouldQuit() {
+			return errors.New("aborted by user")
+		}
+		if opt.ShouldPause != nil && opt.ShouldPause() {
+			for opt.ShouldPause != nil && opt.ShouldPause() {
+				if opt.ShouldQuit != nil && opt.ShouldQuit() {
+					return errors.New("aborted by user")
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			start = time.Now()
+		}
+		if time.Since(start) >= d {
+			return nil
+		}
+		time.Sleep(tick)
+	}
 }

@@ -42,9 +42,9 @@ type Checkpoint struct {
 
 func NewCheckpoint(user, runID string, medias []scraper.Media) *Checkpoint {
 	t := time.Now().UTC()
-	xs := make([]CheckpointItem, len(medias))
+	items := make([]CheckpointItem, len(medias))
 	for i, m := range medias {
-		xs[i] = CheckpointItem{Index: i, URL: m.URL, Type: m.Type, Status: CheckpointPending, Size: 0}
+		items[i] = CheckpointItem{Index: i, URL: m.URL, Type: m.Type, Status: CheckpointPending}
 	}
 	cp := &Checkpoint{
 		Version:   checkpointVersion,
@@ -52,13 +52,13 @@ func NewCheckpoint(user, runID string, medias []scraper.Media) *Checkpoint {
 		RunID:     runID,
 		CreatedAt: t,
 		UpdatedAt: t,
-		Items:     xs,
+		Items:     items,
 	}
-	cp.ix()
+	cp.buildIndex()
 	return cp
 }
 
-func (c *Checkpoint) ix() {
+func (c *Checkpoint) buildIndex() {
 	c.urlIndex = make(map[string]int, len(c.Items))
 	for i, it := range c.Items {
 		if it.URL != "" {
@@ -67,38 +67,35 @@ func (c *Checkpoint) ix() {
 	}
 }
 
-func (c *Checkpoint) touch() {
+func (c *Checkpoint) updateTimestamp() {
 	c.UpdatedAt = time.Now().UTC()
 }
 
-func (c *Checkpoint) MarkByIndex(idx int, s CheckpointStatus, sz int64) {
-	if c == nil {
+func (c *Checkpoint) MarkByIndex(idx int, status CheckpointStatus, size int64) {
+	if c == nil || idx < 0 || idx >= len(c.Items) {
 		return
 	}
-	if idx < 0 || idx >= len(c.Items) {
-		return
+	item := c.Items[idx]
+	item.Status = status
+	if size >= 0 {
+		item.Size = size
 	}
-	it := c.Items[idx]
-	it.Status = s
-	if sz >= 0 {
-		it.Size = sz
-	}
-	c.Items[idx] = it
-	c.touch()
+	c.Items[idx] = item
+	c.updateTimestamp()
 }
 
-func (c *Checkpoint) MarkByURL(u string, s CheckpointStatus, sz int64) {
-	if c == nil || u == "" {
+func (c *Checkpoint) MarkByURL(url string, status CheckpointStatus, size int64) {
+	if c == nil || url == "" {
 		return
 	}
 	if c.urlIndex == nil {
-		c.ix()
+		c.buildIndex()
 	}
-	i, ok := c.urlIndex[u]
+	i, ok := c.urlIndex[url]
 	if !ok {
 		return
 	}
-	c.MarkByIndex(i, s, sz)
+	c.MarkByIndex(i, status, size)
 }
 
 func (c *Checkpoint) PendingItems() []CheckpointItem {
@@ -131,40 +128,40 @@ func (c *Checkpoint) CompletedCount() (done, skipped, failed int) {
 	return
 }
 
-func (c *Checkpoint) Save(p string) error {
+func (c *Checkpoint) Save(path string) error {
 	if c == nil {
 		return errors.New("nil checkpoint")
 	}
-	if p == "" {
+	if path == "" {
 		return errors.New("empty checkpoint path")
 	}
-	c.touch()
-	d := filepath.Dir(p)
-	if err := utils.EnsureDir(d); err != nil {
+	c.updateTimestamp()
+	dir := filepath.Dir(path)
+	if err := utils.EnsureDir(dir); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return utils.SaveToFile(p, b)
+	return utils.SaveToFile(path, data)
 }
 
-func LoadCheckpoint(p string) (*Checkpoint, error) {
-	if p == "" {
+func LoadCheckpoint(path string) (*Checkpoint, error) {
+	if path == "" {
 		return nil, errors.New("empty checkpoint path")
 	}
-	b, err := os.ReadFile(p)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var cp Checkpoint
-	if err := json.Unmarshal(b, &cp); err != nil {
+	if err := json.Unmarshal(data, &cp); err != nil {
 		return nil, err
 	}
 	if cp.Version <= 0 {
 		cp.Version = checkpointVersion
 	}
-	cp.ix()
+	cp.buildIndex()
 	return &cp, nil
 }

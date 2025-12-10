@@ -13,6 +13,9 @@
         "id": "1D04dx9H2pseMQAbMjXTvQ",
         "name": "UserMedia",
         "path": "1D04dx9H2pseMQAbMjXTvQ/UserMedia"
+      },
+      "tweet_detail": {
+        "path": "6QzqakNMdh_YzBAR9SYPkQ/TweetDetail"
       }
     }
   },
@@ -74,7 +77,11 @@
       "tweet_awards_web_tipping_enabled": true,
       "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
       "verified_phone_label_enabled": false,
-      "view_counts_everywhere_api_enabled": true
+      "view_counts_everywhere_api_enabled": true,
+
+      "responsive_web_grok_community_note_auto_translation_is_enabled": false,
+      "responsive_web_grok_analysis_button_from_backend": true
+
     },
     "media": {
       "articles_preview_enabled": true,

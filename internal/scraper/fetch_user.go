@@ -14,7 +14,7 @@ import (
 	"github.com/ghostlawless/xdl/internal/utils"
 )
 
-type rUser struct {
+type userByScreenNameResponse struct {
 	Data struct {
 		User struct {
 			Result struct {
@@ -66,34 +66,35 @@ func FetchUserID(cl *http.Client, cf *config.EssentialsConfig, usr string) (stri
 		return "", err
 	}
 
-	var rp rUser
-	if jerr := json.Unmarshal(b, &rp); jerr == nil && rp.Data.User.Result.RestID != "" {
-		return rp.Data.User.Result.RestID, nil
+	var typed userByScreenNameResponse
+	if jerr := json.Unmarshal(b, &typed); jerr == nil && typed.Data.User.Result.RestID != "" {
+		return typed.Data.User.Result.RestID, nil
 	}
 
-	var g any
-	if jerr := json.Unmarshal(b, &g); jerr == nil {
-		if id := scan(g); id != "" {
+	var generic any
+	if jerr := json.Unmarshal(b, &generic); jerr == nil {
+		if id := extractRestIDFromAny(generic); id != "" {
 			return id, nil
 		}
 	}
+
 	return "", errors.New("rest_id not found in response")
 }
 
-func scan(v any) string {
+func extractRestIDFromAny(v any) string {
 	switch t := v.(type) {
 	case map[string]any:
 		if s, ok := t["rest_id"].(string); ok && s != "" {
 			return s
 		}
 		for _, vv := range t {
-			if id := scan(vv); id != "" {
+			if id := extractRestIDFromAny(vv); id != "" {
 				return id
 			}
 		}
 	case []any:
 		for _, vv := range t {
-			if id := scan(vv); id != "" {
+			if id := extractRestIDFromAny(vv); id != "" {
 				return id
 			}
 		}

@@ -1,23 +1,21 @@
-# xdl – X (Twitter) Media Downloader & Scraper (CLI)
-Keywords: twitter media downloader, x scraper, twitter image downloader, twitter video downloader, cli, golang.
+# xdl – X (Twitter) Media Downloader & Scraper (CLI)  
+Keywords: twitter media downloader, x scraper, twitter image downloader, twitter video downloader, cli, golang.  
 
-`xdl` is a simple, fast, **local** tool that downloads **all images and videos** from any public X (Twitter) profile.  
-Everything runs directly on your machine.
+`xdl` is a simple, fast, **local** tool that downloads **all images and videos** from any public X (Twitter) profile. Everything runs directly on your machine.
 
 ---
 
 ## ⭐ Key Features
-
 - Download **all media** (images + videos) from public profiles  
 - Works with **the same endpoints used by the X web client**  
 - Also works on private profiles **you follow**  
 - 100% **local**  
-- Cross-platform: Windows, Linux, macOS  
-- Fast CLI workflow with minimal configuration  
+- Cross‑platform: Windows, Linux, macOS  
+- Fast CLI workflow with minimal configuration
 
 ---
 
-## 🔍 Configuration
+## Configuration
 
 ### Cookies (required)
 
@@ -33,40 +31,41 @@ config/cookies.json
 
 ---
 
-## 🛠️ Installation
+## Installation
 
-Requires **Go 1.21+**
+Requires **Go 1.21+**
 
 ```bash
-#Clone **one** of the repositories:
-git clone https://github.com/ghostlawless/xdl.git # For github (Primary)
-git clone https://gitlab.com/medusax/xdl # For gitlab (Mirror)
+# Clone **one** of the repositories:
+git clone https://github.com/ghostlawless/xdl.git  # For GitHub (Primary)
+# or
+git clone https://gitlab.com/medusax/xdl               # For GitLab (Mirror)
 
-#Enter the project directory:
+# Enter the project directory:
 cd xdl
 
-#Build
-go build -o xdl ./cmd/xdl       # Linux / macOS
+# Build
+go build -o xdl ./cmd/xdl       # Linux / macOS  
 go build -o xdl.exe ./cmd/xdl   # Windows
 ```
 
 ---
 
-## 🚀 Usage
+## Usage
 
 ```bash
-xdl -c cookies.json USERNAME
+xdl USERNAME
 ```
 
 Example:
 
 ```bash
-xdl -c cookies.json lawlessmedusax
+xdl lawlessmedusax
 ```
 
 ---
 
-## 📁 Output Structure
+## Output Structure
 
 ```
 exports/
@@ -80,25 +79,25 @@ debug_raw/
 
 ---
 
-## 📘 Project Structure
+## Project Structure
 
 ```
-cmd/xdl          → CLI entrypoint
-config/          → essentials
-internal/
-  scraper/       → media discovery
-  downloader/    → file downloading
-  runtime/       → timing & behavior
-  httpx/         → HTTP helpers
-  app/           → orchestration
-  utils/         → small helpers
-LICENSE
-README.md
+cmd/xdl          → CLI entrypoint  
+config/          → essentials  
+internal/  
+  scraper/       → media discovery  
+  downloader/    → file downloading  
+  runtime/       → timing & behavior  
+  httpx/         → HTTP helpers  
+  app/           → orchestration  
+  utils/         → small helpers  
+LICENSE  
+README.md  
 ```
 
 ---
 
-## 🔐 Privacy
+## Privacy
 
 - No telemetry  
 - No analytics  
@@ -114,7 +113,27 @@ You are responsible for complying with X’s Terms of Service and local laws.
 
 ---
 
-## 📜 License
+## Media Limitations on X
+
+`xdl` downloads **all media that your logged-in X session can see** in the **Media** tab of a profile.
+
+X applies internal timeline limits — both in the UI and in the underlying GraphQL endpoints.  
+This means that, for many profiles, **only a portion of the full historical media** is exposed through the official web client. After a certain depth, the backend simply **stops returning new pages**, even if the profile contains older posts.
+
+`xdl` mirrors this exact behavior:
+
+- It fetches **every media item** delivered by X’s `UserMedia` timeline  
+- When X stops supplying new pages, `xdl` reaches the **end of the visible media history**  
+- No hidden or older content exists for the tool to retrieve via the normal web interface
+
+This is **not** a bug in `xdl` — it’s a structural limitation of the X web client API.
+
+If X’s UI does not load more media when you scroll to the bottom of the **Media** tab,  
+`xdl` will not receive more media either.
+
+---
+
+## License
 
 AGPL-3.0  
 Fork, study, modify, contribute.

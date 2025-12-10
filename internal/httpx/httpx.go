@@ -19,9 +19,10 @@ import (
 )
 
 type RequestOptions struct {
-	MaxBytes int64
-	Decode   bool
-	Accept   func(int) bool
+	Decode       bool
+	MaxBytes     int64
+	Accept       func(int) bool
+	DebugLogPath string
 }
 
 func ualist() []string {
@@ -73,17 +74,22 @@ func DoRequestWithOptions(cl *http.Client, rq *http.Request, op RequestOptions) 
 	if cl == nil || rq == nil {
 		return nil, 0, errors.New("nil client or request")
 	}
+
 	stdh(rq)
 	rq.Header.Set("Referer", "https://x.com/")
+
 	res, err := cl.Do(rq)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer res.Body.Close()
+
 	st := res.StatusCode
+
 	if op.Accept == nil {
 		op.Accept = func(s int) bool { return s >= 200 && s < 300 }
 	}
+
 	var rd io.Reader = res.Body
 	if op.Decode {
 		switch strings.ToLower(res.Header.Get("Content-Encoding")) {
@@ -103,39 +109,21 @@ func DoRequestWithOptions(cl *http.Client, rq *http.Request, op RequestOptions) 
 			}
 		}
 	}
+
 	if op.MaxBytes > 0 {
 		rd = io.LimitReader(rd, op.MaxBytes)
 	}
+
 	b, rerr := io.ReadAll(rd)
 	if rerr != nil {
 		return b, st, rerr
 	}
+
 	if !op.Accept(st) {
 		return b, st, fmt.Errorf("unacceptable HTTP status: %d", st)
 	}
-	return b, st, nil
-}
 
-func refFrom(raw, hint string) string {
-	if hint != "" {
-		return hint
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u == nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	h := strings.ToLower(u.Host)
-	p := u.Path
-	if strings.Contains(h, "x.com") {
-		if p != "" && p != "/" {
-			return u.Scheme + "://" + u.Host + p
-		}
-		return u.Scheme + "://" + u.Host
-	}
-	if strings.Contains(h, "twimg.com") {
-		return "https://x.com/"
-	}
-	return ""
+	return b, st, nil
 }
 
 func Head(cl *http.Client, raw, ref string) (http.Header, int64, string, int, error) {
