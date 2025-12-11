@@ -132,6 +132,8 @@ You are responsible for complying with X’s Terms of Service and local laws.
 X applies internal timeline limits — both in the UI and in the underlying GraphQL endpoints.  
 This means that, for many profiles, **only a portion of the full historical media** is exposed through the official web client. After a certain depth, the backend simply **stops returning new pages**, even if the profile contains older posts.
 
+** xdl now always runs in HQ (high quality) mode, prioritizing the best available media variants over raw speed. As a result, downloads may feel slower, since the tool performs extra checks and uses more cautious, human-like request pacing and batching to stay friendly to the underlying platform.
+
 `xdl` mirrors this exact behavior:
 
 - It fetches **every media item** delivered by X’s `UserMedia` timeline  
