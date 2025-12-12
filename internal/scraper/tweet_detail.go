@@ -47,7 +47,6 @@ type tweetLegacy struct {
 type tweetResult struct {
 	RestID string      `json:"rest_id"`
 	Legacy tweetLegacy `json:"legacy"`
-	// Para casos "__typename": "TweetWithVisibilityResults"
 	Tweet *struct {
 		RestID string      `json:"rest_id"`
 		Legacy tweetLegacy `json:"legacy"`
@@ -129,7 +128,6 @@ func GetHighQualityMediaForTweet(
 		return nil, fmt.Errorf("build TweetDetail request: %w", err)
 	}
 
-	// >>> correção do bug de auth:
 	ref := strings.TrimRight(cf.X.Network, "/") + "/i/status/" + tweetID
 	cf.BuildRequestHeaders(req, ref)
 	req.Header.Set("Accept", "application/json, */*;q=0.1")
@@ -244,8 +242,6 @@ func extractBestMediaFromTweet(tr *tweetResult) []Media {
 		}
 	}
 
-	// ExtendedEntities primeiro (normalmente mais completo),
-	// depois Entities como fallback.
 	merge(legacy.ExtendedEntities.Media)
 	merge(legacy.Entities.Media)
 
@@ -307,3 +303,4 @@ func bestVideoVariantURL(vs []struct {
 	})
 	return cands[0].url
 }
+
