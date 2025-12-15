@@ -2,41 +2,38 @@
 
 Keywords: x media downloader, twitter media downloader, x scraper, twitter image downloader, twitter video downloader, cli.
 
-![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
+![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 
-`xdl` is a **local-first** CLI that downloads images and videos from **a single X (Twitter) profile** that your logged-in session can see.
+`xdl` is a local-first CLI that downloads images and videos from a single X (Twitter) profile that your logged-in session can see.
 
 - No hosted API
 - No accounts
 - No telemetry
 - Runs on your machine
 
-> **Quality-first by design:** `xdl` intentionally trades raw speed for higher-quality media variants and more stable behavior.
+> Quality-first by design: `xdl` intentionally trades raw speed for higher-quality media variants and more stable behavior.
 
 ---
 
 ## Download (no Go required)
 
-Prebuilt binaries are published in GitHub **Releases**:
+Prebuilt binaries are published in GitHub Releases.
 
-- **Windows (amd64)**: `xdl-windows-amd64.exe`
-- **Linux (amd64)**: `xdl-linux-amd64`
+Latest release:
+- https://github.com/M-e-d-u-s-a-X/xdl/releases/latest
 
-Download prebuilt binaries (Windows/Linux) from **Releases**:
-- [https://github.com/M-e-d-u-s-a-X/xdl/releases/latest](https://github.com/M-e-d-u-s-a-X/xdl/releases/tag/v0.1.0)
+Direct download (always latest):
+- Windows (amd64): https://github.com/M-e-d-u-s-a-X/xdl/releases/latest/download/xdl-windows-amd64.exe
+- Linux (amd64):   https://github.com/M-e-d-u-s-a-X/xdl/releases/latest/download/xdl-linux-amd64
 
-
-### v0.1.0 binaries
-- Windows (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe)
-- Linux (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-linux-amd64](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-linux-amd64)
-
+---
 
 ## Folder layout
-Place the binary in a folder, and keep cookies at `cookies.txt` next to it:
-```
-xdl.exe (or xdl-linux-amd64)
-cookies.json
-```
+
+Put the binary and cookies in the same folder:
+
+    xdl-windows-amd64.exe (or xdl-linux-amd64)
+    cookies.json
 
 ---
 
@@ -47,10 +44,8 @@ cookies.json
 `xdl` uses your existing X login via browser cookies.
 
 1. Log into X in your browser
-2. Export cookies as **JSON** (for example, using the “Cookie-Editor” extension)
-3. Save the file as:
-
-`cookies.json`
+2. Export cookies as JSON (for example, using the “Cookie-Editor” extension)
+3. Save the file as `cookies.json` (same folder as the binary)
 
 This file is read locally and is not uploaded anywhere by `xdl`.
 
@@ -59,31 +54,26 @@ This file is read locally and is not uploaded anywhere by `xdl`.
 ### Windows (PowerShell)
 
 (Optional) rename the file to make commands shorter:
-```powershell
-ren .\xdl-windows-amd64.exe xdl.exe
-```
+
+    ren .\xdl-windows-amd64.exe xdl.exe
 
 Run:
-```powershell
-.\xdl.exe USERNAME
-```
+
+    .\xdl.exe USERNAME
 
 ### Linux
 
 Make it executable:
-```bash
-chmod +x ./xdl-linux-amd64
-```
+
+    chmod +x ./xdl-linux-amd64
 
 Run:
-```bash
-./xdl-linux-amd64 USERNAME
-```
+
+    ./xdl-linux-amd64 USERNAME
 
 Example:
-```bash
-./xdl-linux-amd64 google
-```
+
+    ./xdl-linux-amd64 google
 
 ---
 
@@ -98,10 +88,12 @@ Example:
 ## Troubleshooting
 
 ### “403” / “Unauthorized” / downloads stop
+
 - Cookies may be missing, expired, or exported incorrectly.
-- Re-export cookies and confirm the file is exactly at `config/cookies.json`.
+- Re-export cookies and confirm the file is exactly: `cookies.json` (same folder as the binary).
 
 ### Windows says “not a valid application”
+
 - The wrong binary was used (e.g., Linux binary on Windows).
 - Download `xdl-windows-amd64.exe` from Releases.
 
@@ -111,28 +103,23 @@ Example:
 
 Only needed if you want to modify the code.
 
-```bash
-go build ./cmd/xdl
-```
+    go build ./cmd/xdl
 
 Cross-compile from Linux (Ubuntu):
 
-```bash
-mkdir -p dist
+    mkdir -p dist
 
-# Linux (amd64)
-env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/xdl-linux-amd64 ./cmd/xdl
+    # Linux (amd64)
+    env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/xdl-linux-amd64 ./cmd/xdl
 
-# Windows (amd64)
-env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/xdl-windows-amd64.exe ./cmd/xdl
-```
+    # Windows (amd64)
+    env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/xdl-windows-amd64.exe ./cmd/xdl
 
 ---
 
 ## Legal
 
-This project is intended for educational and personal use.
-Users are responsible for complying with X’s Terms of Service and applicable laws.
+This project is intended for educational and personal use. Users are responsible for complying with X’s Terms of Service and applicable laws.
 
 ---
 
