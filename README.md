@@ -29,16 +29,10 @@ Download prebuilt binaries (Windows/Linux) from **Releases**:
 ### v0.1.0 binaries
 - Windows (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe)
 - Linux (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-linux-amd64](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-linux-amd64)
-- Checksums: https://github.com/ghostlawless/xdl/releases/download/v0.1.0/SHA256SUMS.txt
-
-
-`xdl` ships with **embedded defaults** (no separate `essentials.json` required).
 
 
 ## Folder layout
-
 Place the binary in a folder, and keep cookies at `cookies.txt` next to it:
-
 ```
 xdl.exe (or xdl-linux-amd64)
 cookies.json
