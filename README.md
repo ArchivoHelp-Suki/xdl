@@ -22,12 +22,18 @@ Prebuilt binaries are published in GitHub **Releases**:
 - **Windows (amd64)**: `xdl-windows-amd64.exe`
 - **Linux (amd64)**: `xdl-linux-amd64`
 
-Download the correct file for your OS here:
-- [Releases](https://github.com/m-e-d-u-s-a-x/xdl/releases)
+Download prebuilt binaries (Windows/Linux) from **Releases**:
+- [https://github.com/M-e-d-u-s-a-X/xdl/releases/latest](https://github.com/M-e-d-u-s-a-X/xdl/releases/tag/v0.1.0)
+
+
+### v0.1.0 binaries
+- Windows (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-windows-amd64.exe)
+- Linux (amd64): [https://github.com/ghostlawless/xdl/releases/download/v0.1.0/xdl-linux-amd64](https://github.com/M-e-d-u-s-a-X/xdl/releases/download/v0.1.0/xdl-linux-amd64)
+- Checksums: https://github.com/ghostlawless/xdl/releases/download/v0.1.0/SHA256SUMS.txt
+
 
 `xdl` ships with **embedded defaults** (no separate `essentials.json` required).
 
----
 
 ## Folder layout
 
